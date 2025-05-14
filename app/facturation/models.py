@@ -98,13 +98,16 @@ class InvoiceConcept(Base):
     invoice_id = Column(Integer, ForeignKey('invoice.id'),  primary_key=True)
 
 
-# (Opcional) Usuarios ↔ predios
 class PropertyUser(Base):
     __tablename__ = 'user_property'
 
     property_id = Column(Integer, ForeignKey('property.id'), primary_key=True)
-    user_id     = Column(Integer, ForeignKey('users.id'),    primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
 
+    # Relación con Property
+    property = relationship("Property", back_populates="property_users")
+    # Relación con User
+    user = relationship("User", back_populates="property_users")
 
 # Tabla principal de conceptos
 class Concept(Base):
@@ -138,22 +141,55 @@ class Concept(Base):
 
 
 
+
 class Request(Base):
-    __tablename__ = 'request'
-    id     = Column(Integer, primary_key=True)
-    lot_id = Column(Integer, ForeignKey('lot.id'), nullable=False)
+    __tablename__ = 'request'    
+    id       = Column(Integer, primary_key=True, index=True)
+    lot_id   = Column(Integer, ForeignKey('lot.id'), nullable=False)
+
+    # relación inversa
+    measurements = relationship(
+        "ConsumptionMeasurement",
+        back_populates="request"
+    )
 
 
+class User(Base):
+    __tablename__ = 'users'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    first_last_name = Column(String, nullable=False)
+    second_last_name = Column(String, nullable=False)
+    document_number = Column(String, nullable=False)  
+
+    # Relación con PropertyUser
+    property_users = relationship("PropertyUser", back_populates="user")
 
 class ConsumptionMeasurement(Base):
     __tablename__ = "consumption_measurements"
 
-    id = Column(Integer, primary_key=True, index=True)
-    request_id = Column(Integer, nullable=False)
-    final_volume = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relación con invoice
-    invoice_id = Column(Integer, ForeignKey("invoice.id"), nullable=True)
-    request = relationship("Request", backref="measurements")
+    id           = Column(Integer, primary_key=True, index=True)
+   
+    request_id   = Column(
+        Integer,
+        ForeignKey("request.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    final_volume = Column(Float, nullable=False)
+    created_at   = Column(DateTime, default=datetime.utcnow)
 
+    invoice_id   = Column(Integer, ForeignKey("invoice.id"), nullable=True)
+
+    
+    request      = relationship(
+        "Request",
+        back_populates="measurements"
+    )
+
+
+class PaymentInterval(Base):
+    __tablename__ = "payment_interval"
+
+    id   = Column(Integer, primary_key=True, index=True)
+    name = Column(String(64), nullable=False)

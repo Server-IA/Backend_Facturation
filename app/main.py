@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from app.database import Base, engine
 from app.facturation.routes import router as facturation_router
 from app.payu.routes import router as payu_router
+from app.billing.routes import router as billing_router
 from app.middlewares import setup_middlewares
 from app.exceptions import setup_exception_handlers
 
@@ -18,7 +19,7 @@ setup_middlewares(app)
 setup_exception_handlers(app)
 app.include_router(facturation_router)
 app.include_router(payu_router)
-
+app.include_router(billing_router)
 Base.metadata.create_all(bind=engine)
 
 @app.on_event("startup")

@@ -1,4 +1,6 @@
 # services.py
+import joblib
+from pathlib import Path
 from datetime import datetime, timedelta
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -15,76 +17,106 @@ from app.ml import (
 
 
 class MLService:
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        modelo_consumo_path: str = None,
+        modelo_lluvia_path: str = None,
+        modelo_clasificacion_path: str = None,
+        columnas_path: str = None,
+        rain_sensitivity: float = 0.1,
+        scaler_path: str = None
+    ):
         self.db = db
+        # carpeta donde está este archivo
+        base_dir = Path(__file__).resolve().parent.parent  # sube un nivel para llegar a la raíz
 
-    def predict_consumption(self, payload: PredictInput, rain_sensitivity: float = 0.1):
+        # si no te pasan ruta, la construyes aquí
+        self.modelo_consumo_path = modelo_consumo_path or str(base_dir / "ml_models" / "modelo_consumo.pkl")
+        self.modelo_lluvia_path = modelo_lluvia_path or str(base_dir / "ml_models" / "modelo_lluvia.pkl")
+        self.modelo_clasificacion_path = modelo_clasificacion_path or str(base_dir / "ml_models" / "modelo_clasificacion.pkl")
+        self.columnas_path = columnas_path or str(base_dir / "ml_models" / "columnas_esperadas.pkl")
+
+        # carga los modelos
+        self.m_cons = joblib.load(self.modelo_consumo_path)
+        self.m_rain = joblib.load(self.modelo_lluvia_path)
+        self.m_clas = joblib.load(self.modelo_clasificacion_path)
+        self.cols   = joblib.load(self.columnas_path)
+        self.scaler = joblib.load(scaler_path) if scaler_path else None
+        self.rain_sensitivity = rain_sensitivity
+
+        # Si tienes un scaler (MinMax o Standard), cárgalo
+        self.scaler = joblib.load(scaler_path) if scaler_path else None
+
+    def predict_consumption(self, payload: PredictInput):
         """
-        Predice consumo ajustado por la lluvia esperada y clasificación del cultivo,
-        usando los tres modelos existentes sin reentrenarlos.
-
-        rain_sensitivity: cuánto reduce el consumo cada unidad predicha de lluvia.
+        Recibe los datos de temperatura, humedad, etc., hace predicción
+        y devuelve:
+         - consumo_base: predicción cruda
+         - historical_avg: promedio histórico si hay lot_id
+         - lluvia: predicción de lluvia
+         - consumo_ajustado: con factor de clase y lluvia
         """
-        # 1) Carga de modelos
-        models = get_models()
-        m_cons = models["consumo"]
-        m_rain = models["lluvia"]
-        m_clas = models["clasificacion"]
-        cols   = models["columnas"]
-
-        # 2) Preprocesamiento idéntico al inicial
-        data = payload.model_dump()
-        df   = pd.DataFrame([data])
-        df   = pd.get_dummies(df)
-        for c in cols:
-            if c not in df.columns:
-                df[c] = 0
-        df = df[cols]
-
-        # 3) Predicción base de consumo
         try:
-            base_cons = float(m_cons.predict(df)[0])
+            # 1) Convertir el payload en DataFrame
+            df = pd.DataFrame([payload.dict()])
+
+            # 2) Dummy-encoding de variables categóricas
+            df = pd.get_dummies(df, columns=["TipoCultivo", "TipoTierra"], drop_first=True)
+
+            # 3) Añadir columnas faltantes y reordenar
+            for c in self.cols:
+                if c not in df.columns:
+                    df[c] = 0
+            df = df[self.cols]
+
+            # 4) Escalado (si aplica)
+            if self.scaler:
+                df_scaled = pd.DataFrame(self.scaler.transform(df), columns=self.cols)
+            else:
+                df_scaled = df
+
+            # 5) Promedio histórico de consumo (si vienen datos de lot_id)
+            historical_avg = None
+            if payload.lot_id is not None:
+                historical_avg = (
+                    self.db.query(func.avg(ConsumptionMeasurement.final_volume))
+                      .join(Request, Request.id == ConsumptionMeasurement.request_id)
+                      .filter(Request.lot_id == payload.lot_id)
+                      .scalar()
+                )
+                # redondear para salida amigable
+                historical_avg = round(historical_avg or 0, 2)
+
+            # 6) Predicción base de consumo
+            consumo_base = float(self.m_cons.predict(df_scaled)[0])
+
+            # 7) Predicción de lluvia
+            lluvia = float(self.m_rain.predict(df_scaled)[0])
+
+            # 8) Predicción de clase de cultivo y factor
+            clase = self.m_clas.predict(df_scaled)[0]
+            factores_clase = {"A": 1.00, "B": 1.10, "C": 0.90}
+            factor = factores_clase.get(str(clase), 1.0)
+
+            # 9) Ajuste final restando efecto lluvia y aplicando factor de clase
+            consumo_ajustado = (consumo_base - lluvia * self.rain_sensitivity) * factor
+
+            # 10) Devolver todos los resultados redondeados
+            return {
+                "prediccion_consumo_base": round(consumo_base, 2),                # Consumo estimado sin ajustes
+                "promedio_historico_consumo": historical_avg,                     # Promedio real del lote (historical_avg_consumption)
+                "prediccion_lluvia_mm": round(lluvia, 2),                         # Lluvia estimada por el modelo
+                "factor_ajuste_por_clase": factor,                                # Ajuste según clase de cultivo
+                "consumo_ajustado_final": round(consumo_ajustado, 2),             # Consumo luego de restar lluvia y aplicar factor
+            }
+
         except Exception as e:
-            raise HTTPException(500, f"Error en consumo: {e}")
-
-        # 4) Predicción de clasificación
-        try:
-            clase = m_clas.predict(df)[0]
-        except Exception as e:
-            raise HTTPException(500, f"Error en clasificación: {e}")
-
-        # 5) Predicción de lluvia
-        try:
-            rain = float(m_rain.predict(df)[0])
-        except Exception as e:
-            raise HTTPException(500, f"Error en lluvia: {e}")
-
-        # 6) Factor de ajuste según la clase de cultivo
-        class_factors = {
-            "A": 1.00,
-            "B": 1.10,
-            "C": 0.90,
-        }
-        factor_clase = class_factors.get(str(clase), 1.0)
-
-        # 7) Cálculo del consumo ajustado
-        #    - Se reduce según lluvia (cuanto más llueva, menos consumo)
-        #    - Se multiplica por el factor de la clase de cultivo
-        adjusted_cons = (base_cons - rain * rain_sensitivity) * factor_clase
-
-        # 8) Construcción y retorno de la respuesta
-        result = {
-            "base_consumption":     round(base_cons, 2),
-            "predicted_rain":       round(rain, 2),
-            "crop_class":           clase,
-            "class_factor":         factor_clase,
-            "rain_sensitivity":     rain_sensitivity,
-            "adjusted_consumption": round(adjusted_cons, 2),
-        }
-        return JSONResponse(
-            status_code=200,
-            content=jsonable_encoder({"success": True, "data": result})
-        )
+            # Un único manejo de errores
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo calcular la predicción de consumo: {e}"
+            )
     
 
 
