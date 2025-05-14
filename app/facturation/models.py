@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy import (
     Column,
     Integer,
@@ -89,6 +90,13 @@ class PropertyLot(Base):
     property_id = Column(Integer, ForeignKey('property.id'), primary_key=True)
     lot_id      = Column(Integer, ForeignKey('lot.id'),     primary_key=True)
 
+# Tabla intermedia predio ↔ lote
+class InvoiceConcept(Base):
+    __tablename__ = 'invoice_concept'
+
+    concept_id = Column(Integer, ForeignKey('concepts.id'), primary_key=True)
+    invoice_id = Column(Integer, ForeignKey('invoice.id'),  primary_key=True)
+
 
 # (Opcional) Usuarios ↔ predios
 class PropertyUser(Base):
@@ -126,3 +134,14 @@ class Concept(Base):
     estado      = relationship('Var',       foreign_keys=[estado_id])
     property    = relationship('Property',  foreign_keys=[predio_id])
     lot         = relationship('Lot',       foreign_keys=[lote_id])
+
+class ConsumptionMeasurement(Base):
+    __tablename__ = "consumption_measurements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, nullable=False)
+    final_volume = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relación con invoice
+    invoice_id = Column(Integer, ForeignKey("invoice.id"), nullable=True)

@@ -20,11 +20,23 @@ def get_pse_banks():
 
 
 @router.post("/pse-payment")
-def create_pse_payment(payload: dict = Body(...)):
+def create_pse_payment(request: Request, payload: dict = Body(...)):
     """
     Crear una transacción PSE con los datos del cliente y el banco.
     """
-    return payu_service.create_pse_payment(payment_data=payload)
+    # Extraer información del cliente HTTP
+    ip_address = request.client.host
+    user_agent = request.headers.get("user-agent")
+    cookie = request.headers.get("cookie")  # Asegúrate que el cliente lo envíe si lo necesitas
+
+    # Combinar todo en un solo diccionario
+    payment_data = {
+        **payload,
+        "ipAddress": ip_address,
+        "userAgent": user_agent,
+        "cookie": cookie,
+    }
+    return payu_service.create_pse_payment(payment_data=payment_data)
 
 @router.get("/retorno", response_class=HTMLResponse)
 def payu_retorno(request: Request):

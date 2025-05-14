@@ -4,7 +4,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
@@ -88,37 +88,24 @@ class PayUService:
             PAYU_API_KEY = os.getenv("PAYU_API_KEY")
             PAYU_ACCOUNT_ID = os.getenv("PAYU_ACCOUNT_ID")
             PAYU_MERCHANT_ID = os.getenv("PAYU_MERCHANT_ID")
-            CURRENCY = payment_data.get("currency", "COP")
-            AMOUNT = float(payment_data["amount"])
+            CURRENCY = "COP"
 
             if not all([PAYU_ENV_URL, PAYU_API_LOGIN, PAYU_API_KEY, PAYU_ACCOUNT_ID, PAYU_MERCHANT_ID]):
                 raise HTTPException(500, "Variables de entorno PayU incompletas")
-
-            # 1. Generar código de referencia único
-            reference_code = self.generate_reference_code(self.db)
+            
+            invoice_id = payment_data["detailInvoice"]["invoice_id"]
 
             # 2. Crear factura antes de intentar el pago
-            invoice = Invoice(
-                reference_code=reference_code,
-                client_name=payment_data["payer"]["fullName"],
-                client_email=payment_data["payer"]["emailAddress"],
-                issuance_date=datetime.utcnow(),
-                expiration_date=datetime.utcnow() + timedelta(days=15),
-                invoiced_period=payment_data["detailInvoice"]["invoiced_period"],
-                total_amount=AMOUNT,
-                lot_id=payment_data["detailInvoice"]["lot_id"],
-                status="pendiente"
-            )
-            self.db.add(invoice)
-            self.db.commit()
-            self.db.refresh(invoice)
+            invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+
+            users = self.get_user_info_by_lot(invoice.lot_id)
 
             # 3. Generar firma para PayU
             signature = self.generate_signature(
                 api_key=PAYU_API_KEY,
                 merchant_id=PAYU_MERCHANT_ID,
-                reference_code=reference_code,
-                amount=AMOUNT,
+                reference_code=invoice.reference_code,
+                amount=invoice.total_amount,
                 currency=CURRENCY
             )
 
@@ -136,13 +123,13 @@ class PayUService:
                 "transaction": {
                     "order": {
                         "accountId": PAYU_ACCOUNT_ID,
-                        "referenceCode": reference_code,
-                        "description": payment_data.get("description", "Pago por PSE"),
+                        "referenceCode": invoice.reference_code,
+                        "description": "Pago por PSE",
                         "language": "es",
                         "signature": signature,
-                        "notifyUrl": payment_data["notifyUrl"],
+                        "notifyUrl": "https://backend-facturation.onrender.com/payu/notificacion",
                         "additionalValues": {
-                            "TX_VALUE": {"value": AMOUNT, "currency": CURRENCY},
+                            "TX_VALUE": {"value": invoice.total_amount, "currency": CURRENCY},
                             "TX_TAX": {"value": 0, "currency": CURRENCY},
                             "TX_TAX_RETURN_BASE": {"value": 0, "currency": CURRENCY}
                         },
@@ -151,7 +138,7 @@ class PayUService:
                     },
                     "payer": payment_data["payer"],
                     "extraParameters": {
-                        "RESPONSE_URL": payment_data["responseUrl"],
+                        "RESPONSE_URL": "https://backend-facturation.onrender.com/payu/retorno",
                         "PSE_REFERENCE1": "127.0.0.1",
                         "FINANCIAL_INSTITUTION_CODE": payment_data["bankCode"],
                         "USER_TYPE": "N",
@@ -176,7 +163,7 @@ class PayUService:
 
             # 6. Guardar log de intento de pago
             log = PaymentLog(
-                reference_code=reference_code,
+                reference_code=invoice.reference_code,
                 invoice_id=invoice.id,
                 payload=data
             )
@@ -200,6 +187,33 @@ class PayUService:
                 status_code=500,
                 content={"success": False, "data": {"title": "Error inesperado", "message": str(e)}}
             )
+        
+    def get_user_info_by_lot(self, lot_id: int):
+        try:
+            sql = text("""
+                SELECT 
+                    u.id AS user_id,
+                    CONCAT(u.name, ' ', u.first_last_name, ' ', u.second_last_name) AS user_name,
+                    u.email AS user_email,
+                    u.document_number AS user_identification,
+                    l.id AS lot_id,
+                    pl.property_id
+                FROM lot l
+                JOIN property_lot pl ON pl.lot_id = l.id
+                JOIN user_property up ON up.property_id = pl.property_id
+                JOIN users u ON u.id = up.user_id
+                WHERE l.id = :lot_id
+                LIMIT 1
+            """)
+            result = self.db.execute(sql, {"lot_id": lot_id})
+            row = result.fetchone()
+
+            if not row:
+                return {}
+
+            return dict(row._mapping)
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "data": {"message": str(e)}})
 
 
 class PayUProcessor:
@@ -209,7 +223,7 @@ class PayUProcessor:
     def process_notification(self, data: dict):
         # 1. Validar si el pago ya existe por transaction_id
         if self.db.query(Payment).filter_by(transaction_id=data.get("transaction_id")).first():
-            return {"message": "Ya registrado"}
+            return {"message": "Ya se encuentra registrado el pago registrado"}
 
         # 2. Buscar invoice_id desde el log asociado al reference_code
         reference_code = data.get("reference_sale")
