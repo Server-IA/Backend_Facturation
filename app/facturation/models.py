@@ -59,6 +59,11 @@ class Property(Base):
         back_populates="properties",
     )
 
+    property_users                = relationship(
+        "PropertyUser",
+        back_populates="property"
+    )
+
 
 class Lot(Base):
     __tablename__ = 'lot'
@@ -73,7 +78,7 @@ class Lot(Base):
     freedom_tradition_certificate  = Column(String, nullable=True)
     planting_date                  = Column(Date, nullable=True)
     estimated_harvest_date         = Column(Date, nullable=True)
-
+    payment_interval               =Column(Integer,nullable=False)
     State = Column("State", Integer, ForeignKey("vars.id"), default=5, nullable=False)
     vars  = relationship("Var", foreign_keys=[State])
     properties                     = relationship(
@@ -102,12 +107,10 @@ class PropertyUser(Base):
     __tablename__ = 'user_property'
 
     property_id = Column(Integer, ForeignKey('property.id'), primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
+    user_id     = Column(Integer, ForeignKey('users.id'),    primary_key=True)
 
-    # Relación con Property
-    property = relationship("Property", back_populates="property_users")
-    # Relación con User
-    user = relationship("User", back_populates="property_users")
+    property    = relationship("Property", back_populates="property_users")
+    user        = relationship("User",     back_populates="property_users")
 
 # Tabla principal de conceptos
 class Concept(Base):
@@ -157,14 +160,13 @@ class Request(Base):
 class User(Base):
     __tablename__ = 'users'
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    first_last_name = Column(String, nullable=False)
-    second_last_name = Column(String, nullable=False)
-    document_number = Column(String, nullable=False)  
+    id                = Column(Integer, primary_key=True, index=True)
+    name              = Column(String, nullable=False)
+    first_last_name   = Column(String, nullable=False)
+    second_last_name  = Column(String, nullable=False)
+    document_number   = Column(String, nullable=False)
 
-    # Relación con PropertyUser
-    property_users = relationship("PropertyUser", back_populates="user")
+    property_users    = relationship("PropertyUser", back_populates="user")
 
 class ConsumptionMeasurement(Base):
     __tablename__ = "consumption_measurements"

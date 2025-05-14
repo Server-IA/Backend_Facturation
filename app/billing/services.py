@@ -1,10 +1,11 @@
 # app/services/billing.py
-
+from fastapi import HTTPException
 from datetime import date
 from sqlalchemy import func, extract, case
 from sqlalchemy.orm import Session , aliased
-from app.payu.models       import Payment , Invoice
-from app.facturation.models import PaymentInterval, PropertyLot ,PropertyUser , Property , Lot , User
+from app.payu.models       import Payment , Invoice 
+from app.facturation.models import PaymentInterval, PropertyLot ,PropertyUser , Property , Lot , User , ConsumptionMeasurement , Concept , InvoiceConcept
+from app.facturation.models import Var as StatusVar 
 class BillingService:
     def __init__(self, db: Session):
         self.db = db
@@ -84,48 +85,149 @@ class BillingService:
         )
         return float(total)
 
-    def list_invoices_general(self, offset: int = 0, limit: int = 100):
-            """
-            Devuelve listado de facturas con los campos requeridos para la vista general.
-            """
-            # aliases para evitar ambigüedades
-            PI = aliased(PaymentInterval)
-            PL = aliased(PropertyLot)
-            UP = aliased(PropertyUser)
-            U  = aliased(User)
-            P  = aliased(Payment)
+    def list_invoices_general(self):
+        """
+        Devuelve TODAS las facturas con:
+         - invoice_id
+         - invoice_number
+         - property_id
+         - lot_id
+         - client_document (coalesce: primero invoice.user_id, luego por lote)
+         - payment_interval (nombre; opcional)
+         - issuance_date
+         - expiration_date
+         - amount_due
+         - invoice_status
+         - dian_status
+        """
+        PI           = aliased(PaymentInterval)
+        DirectUser   = aliased(User)
+        LotOwnerUser = aliased(User)
 
-            query = (
-                self.db.query(
-                    Invoice.reference_code.label("invoice_number"),             # :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
-                    PL.property_id.label("property_id"),                       # :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-                    Invoice.lot_id.label("lot_id"),
-                    U.document_number.label("client_document"),
-                    PI.name.label("payment_interval"),
-                    Invoice.issuance_date,
-                    Invoice.expiration_date,
-                    Invoice.total_amount.label("amount_due"),
-                    Invoice.status.label("invoice_status"),
-                    P.status.label("payment_status"),
-                    Invoice.dian_status.label("dian_status")
-                )
-                # desde invoice → lote
-                .join(Lot, Invoice.lot_id == Lot.id)
-                # lote → property_lot → user_property → users
-                .join(PL, PL.lot_id == Lot.id)
-                .join(UP, UP.property_id == PL.property_id)
-                .join(U, U.id == UP.user_id)
-                # lote → payment_intervals
-                .join(PI, PI.id == Lot.payment_interval_id)
-                # left join a pagos (puede no haber pago aún)
-                .outerjoin(P, P.invoice_id == Invoice.id)
-                .order_by(Invoice.issuance_date.desc())
-                .offset(offset)
-                .limit(limit)
+        q = (
+            self.db.query(
+                Invoice.id.label("invoice_id"),                            
+                Invoice.reference_code.label("invoice_number"),
+                PropertyLot.property_id,
+                Invoice.lot_id,
+                func.coalesce(
+                    DirectUser.document_number,
+                    LotOwnerUser.document_number
+                ).label("client_document"),
+                PI.name.label("payment_interval"),
+                Invoice.issuance_date,
+                Invoice.expiration_date,
+                Invoice.total_amount.label("amount_due"),
+                Invoice.status.label("invoice_status"),
+                Invoice.dian_status.label("dian_status"),
             )
+            .select_from(Invoice)
+            .outerjoin(Lot, Invoice.lot_id == Lot.id)
+            .outerjoin(PI, Lot.payment_interval == PI.id)
+            .outerjoin(PropertyLot, PropertyLot.lot_id == Lot.id)
+            .outerjoin(
+                PropertyUser,
+                PropertyUser.property_id == PropertyLot.property_id
+            )
+            .outerjoin(
+                LotOwnerUser,
+                PropertyUser.user_id == LotOwnerUser.id
+            )
+            .outerjoin(
+                DirectUser,
+                Invoice.user_id == DirectUser.id
+            )
+            .order_by(Invoice.issuance_date.desc())
+        )
 
-            # devolvemos lista de diccionarios
-            return [row._asdict() for row in query.all()]
+        return [row._asdict() for row in q.all()]
+
+
+    def get_invoice_detail(self, invoice_id: int):
+        invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+        # Pago asociado
+        payment = self.db.query(Payment).filter(Payment.invoice_id == invoice_id).first()
+        payment_data = None
+        if payment:
+            payment_data = {
+                "payment_method":     payment.payment_method,
+                "reference_code":     payment.reference_code,
+                "transaction_amount": float(payment.amount),
+                "payment_date":       payment.paid_at,
+                "payment_status_id":  payment.status,   # repetimos el texto
+                "payment_status_name":payment.status
+            }
+
+        # Documento y property_id
+        client_document = None
+        if invoice.user_id:
+            usr = self.db.get(User, invoice.user_id)
+            client_document = usr.document_number if usr else None
+
+        property_id = None
+        if invoice.lot_id is not None:
+            property_id = (
+                self.db.query(PropertyLot.property_id)
+                       .filter(PropertyLot.lot_id == invoice.lot_id)
+                       .scalar()
+            )
+            if not client_document and property_id:
+                pu = self.db.query(PropertyUser).filter(
+                    PropertyUser.property_id == property_id
+                ).first()
+                if pu:
+                    usr = self.db.get(User, pu.user_id)
+                    client_document = usr.document_number if usr else None
+
+        # Periodo facturado
+        period = {
+            "start_date":      getattr(invoice, "billing_start_date", None),
+            "end_date":        getattr(invoice, "billing_end_date", None),
+            "invoiced_period": getattr(invoice, "invoiced_period", None),
+        }
+
+        # Conceptos
+        total_volume = self.db.query(
+            func.sum(ConsumptionMeasurement.final_volume)
+        ).filter(ConsumptionMeasurement.invoice_id == invoice_id).scalar() or 0
+
+        conceptos = []
+        for concept, ic in self.db.query(Concept, InvoiceConcept).join(
+            InvoiceConcept, Concept.id == InvoiceConcept.concept_id
+        ).filter(InvoiceConcept.invoice_id == invoice_id):
+            conceptos.append({
+                "concept_id":     concept.id,
+                "nombre":         concept.nombre,
+                "descripcion":    concept.descripcion,
+                "valor_unitario": float(concept.valor),
+                "total_concepto": float(total_volume * concept.valor)
+            })
+
+        return {
+            "invoice": {
+                "invoice_id":         invoice.id,
+                "reference_code":     invoice.reference_code,
+                "issuance_date":      invoice.issuance_date,
+                "expiration_date":    invoice.expiration_date,
+                **period,
+                "total_amount":       float(invoice.total_amount),
+                "client_name":        getattr(invoice, "client_name", None),
+                "client_email":       getattr(invoice, "client_email", None),
+                "client_document":    client_document,
+                "property_id":        property_id,
+                "lot_id":             invoice.lot_id,    
+                "invoice_status_name":invoice.status,   
+                "dian_status_id":     invoice.dian_status,
+                "dian_status_name":   invoice.dian_status
+            },
+            "payment":  payment_data,
+            "concepts": conceptos
+        }
+
+
     # --- Transacciones (Pagos) -----------------------------------------------
 
     def get_payment_totals(self, year: int, month: int):
@@ -222,6 +324,75 @@ class BillingService:
         )
         return [{"dia": int(r.dia), "total": r.total} for r in rows]
 
+    def list_payments_general(self):
+        """
+        Listado de todos los pagos con:
+         - invoice_number
+         - payer_document
+         - payment_date
+         - reference_code
+         - payment_method
+         - paid_amount
+         - payment_status_id   (igual al texto del status)
+         - payment_status_name (texto del status)
+        """
+        U = aliased(User)
+
+        q = (
+            self.db.query(
+                Invoice.reference_code.label("invoice_number"),
+                U.document_number.label("payer_document"),
+                Payment.paid_at.label("payment_date"),
+                Payment.reference_code.label("reference_code"),
+                Payment.payment_method.label("payment_method"),
+                Payment.amount.label("paid_amount"),
+                Payment.status.label("payment_status_id"),   # repetimos el código
+                Payment.status.label("payment_status_name")  # y el nombre
+            )
+            .select_from(Payment)
+            .join(Invoice, Payment.invoice_id == Invoice.id)
+            .outerjoin(U, Invoice.user_id == U.id)
+            .order_by(Payment.paid_at.desc())
+        )
+
+        return [row._asdict() for row in q.all()]
+
+
+    def get_payment_detail(self, payment_id: int):
+        """
+        Detalle de un pago:
+         - payment_method
+         - payer_name
+         - transaction_amount
+         - payment_status_id   (igual al texto del status)
+         - payment_status_name (texto del status)
+         - payment_date
+         - reference_code
+         - payer_email
+        """
+        pago: Payment = self.db.query(Payment).filter(Payment.id == payment_id).first()
+        if not pago:
+            raise HTTPException(status_code=404, detail="Pago no encontrado")
+
+        # Nombre del pagador vía invoice.user_id
+        payer_name = None
+        if pago.invoice_id:
+            inv = self.db.query(Invoice).get(pago.invoice_id)
+            if inv and inv.user_id:
+                usr = self.db.query(User).get(inv.user_id)
+                payer_name = f"{usr.name} {usr.first_last_name} {usr.second_last_name}" if usr else None
+
+        return {
+            "payment_method":       pago.payment_method,
+            "payer_name":           payer_name,
+            "transaction_amount":   float(pago.amount),
+            "payment_status_id":    pago.status,  # texto como “id”
+            "payment_status_name":  pago.status,  # mismo texto como “nombre”
+            "payment_date":         pago.paid_at,
+            "reference_code":       pago.reference_code,
+            "payer_email":          pago.payer_email,
+        }
+    
     # --- Paginación y listados (sin filtros; frontend los aplica) ------------
 
     def list_invoices(self, offset: int = 0, limit: int = 100):

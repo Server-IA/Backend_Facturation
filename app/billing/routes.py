@@ -1,6 +1,6 @@
 # app/routes/billing.py
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends , HTTPException
 from sqlalchemy.orm import Session
 from app.billing.services import BillingService
 from app.database import get_db
@@ -32,14 +32,36 @@ def get_invoices(offset: int = 0, limit: int = 100, db: Session = Depends(get_db
     return BillingService(db).list_invoices(offset, limit)
 
 @router.get("/invoices/general")
-def get_invoices_general(offset: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    svc = BillingService(db)
-    data = svc.list_invoices_general(offset, limit)
+def get_invoices_general(db: Session = Depends(get_db)):
+    """
+    Listado general de facturas (sin parámetros de entrada).
+    """
+    data = BillingService(db).list_invoices_general()
     return {"success": True, "data": data}
 
-
+@router.get("/invoices/{invoice_id}")
+def get_invoice_detail(invoice_id: int, db: Session = Depends(get_db)):
+    """
+    Detalle completo de una factura:
+      - Si está pagada: método, referencia, monto y fecha de pago
+      - Datos de factura: id, número, emisión, vencimiento, periodo facturado, total, cliente, documento, email, predio, lote
+      - Lista de conceptos cobrados
+    """
+    data = BillingService(db).get_invoice_detail(invoice_id)
+    return {"success": True, "data": data}
+    
 # --- Transacciones (Pagos) ---
 
+@router.get("/payments/general")
+def get_payments_general(db: Session = Depends(get_db)):
+    data = BillingService(db).list_payments_general()
+    return {"success": True, "data": data}
+
+@router.get("/payments/{payment_id}")
+def get_payment_detail(payment_id: int, db: Session = Depends(get_db)):
+    data = BillingService(db).get_payment_detail(payment_id)
+    return {"success": True, "data": data}
+    
 @router.get("/payments/summary/{year}/{month}")
 def payment_summary(year: int, month: int, db: Session = Depends(get_db)):
     return BillingService(db).get_payment_totals(year, month)
