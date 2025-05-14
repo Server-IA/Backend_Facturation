@@ -77,3 +77,16 @@ class ConceptOut(ConceptBase):
     lot:        Optional[LotOut]      = None
 
     model_config = {"from_attributes": True}
+
+
+
+class PredictInput(BaseModel):
+    Temperatura:  float   = Field(..., example=25.3)
+    Humedad:      float   = Field(..., example=45.2)
+    Altitud:      float   = Field(..., example=1200.0)
+    AreaCultivo:  float   = Field(..., example=1.5)
+    TipoCultivo:  str     = Field(..., example="cafe")
+    TipoTierra:   str     = Field(..., example="arenosa")
+    lot_id:       Optional[int] = Field(None, description="Para calcular histórico")
+
+    model_config = {"from_attributes": True}

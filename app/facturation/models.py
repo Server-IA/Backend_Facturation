@@ -126,3 +126,21 @@ class Concept(Base):
     estado      = relationship('Var',       foreign_keys=[estado_id])
     property    = relationship('Property',  foreign_keys=[predio_id])
     lot         = relationship('Lot',       foreign_keys=[lote_id])
+
+
+
+class Request(Base):
+    __tablename__ = 'request'
+    id     = Column(Integer, primary_key=True)
+    lot_id = Column(Integer, ForeignKey('lot.id'), nullable=False)
+
+
+
+class ConsumptionMeasurement(Base):
+    __tablename__ = 'consumption_measurements'
+    id                         = Column(Integer, primary_key=True)
+    request_id                 = Column(Integer, ForeignKey('request.id'), nullable=False)
+    final_volume               = Column(Numeric(20,2), nullable=False)
+    created_at    = Column(DateTime, nullable=False)
+
+    request = relationship("Request", backref="measurements")

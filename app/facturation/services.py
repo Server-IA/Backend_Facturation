@@ -3,9 +3,87 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+import pandas as pd
+from app.facturation.models import Concept, Lot , ConsumptionMeasurement, Request
+from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
 
-from app.facturation.models import Concept, Lot
-from app.facturation.schemas import ConceptCreate, ConceptUpdate
+from app.ml import (
+     get_models
+)
+
+
+class MLService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def predict_consumption(self, payload: PredictInput, rain_sensitivity: float = 0.1):
+        """
+        Predice consumo ajustado por la lluvia esperada y clasificación del cultivo,
+        usando los tres modelos existentes sin reentrenarlos.
+
+        rain_sensitivity: cuánto reduce el consumo cada unidad predicha de lluvia.
+        """
+        # 1) Carga de modelos
+        models = get_models()
+        m_cons = models["consumo"]
+        m_rain = models["lluvia"]
+        m_clas = models["clasificacion"]
+        cols   = models["columnas"]
+
+        # 2) Preprocesamiento idéntico al inicial
+        data = payload.model_dump()
+        df   = pd.DataFrame([data])
+        df   = pd.get_dummies(df)
+        for c in cols:
+            if c not in df.columns:
+                df[c] = 0
+        df = df[cols]
+
+        # 3) Predicción base de consumo
+        try:
+            base_cons = float(m_cons.predict(df)[0])
+        except Exception as e:
+            raise HTTPException(500, f"Error en consumo: {e}")
+
+        # 4) Predicción de clasificación
+        try:
+            clase = m_clas.predict(df)[0]
+        except Exception as e:
+            raise HTTPException(500, f"Error en clasificación: {e}")
+
+        # 5) Predicción de lluvia
+        try:
+            rain = float(m_rain.predict(df)[0])
+        except Exception as e:
+            raise HTTPException(500, f"Error en lluvia: {e}")
+
+        # 6) Factor de ajuste según la clase de cultivo
+        class_factors = {
+            "A": 1.00,
+            "B": 1.10,
+            "C": 0.90,
+        }
+        factor_clase = class_factors.get(str(clase), 1.0)
+
+        # 7) Cálculo del consumo ajustado
+        #    - Se reduce según lluvia (cuanto más llueva, menos consumo)
+        #    - Se multiplica por el factor de la clase de cultivo
+        adjusted_cons = (base_cons - rain * rain_sensitivity) * factor_clase
+
+        # 8) Construcción y retorno de la respuesta
+        result = {
+            "base_consumption":     round(base_cons, 2),
+            "predicted_rain":       round(rain, 2),
+            "crop_class":           clase,
+            "class_factor":         factor_clase,
+            "rain_sensitivity":     rain_sensitivity,
+            "adjusted_consumption": round(adjusted_cons, 2),
+        }
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder({"success": True, "data": result})
+        )
+    
 
 
 class FacturationService:

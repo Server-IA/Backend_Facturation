@@ -1,11 +1,11 @@
 # routes.py
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends , Body
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.facturation.services import FacturationService
-from app.facturation.schemas import ConceptCreate, ConceptUpdate
+from app.facturation.services import FacturationService , MLService
+from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
 
 router = APIRouter(prefix="/concepts", tags=["Concepts"])
 
@@ -43,3 +43,21 @@ def disable_concept(concept_id: int, db: Session = Depends(get_db)):
     Inhabilita un concepto (estado_id = 28).
     """
     return FacturationService(db).disable_concept(concept_id)
+
+
+@router.post(
+    "/predict-consumption",
+    summary="Predecir consumo de agua",
+    response_model=Dict[str, Any],
+    tags=["Machine Learning"]
+)
+def predict_consumption(
+    payload: PredictInput = Body(...),
+    db:      Session      = Depends(get_db),
+):
+    """
+    Devuelve:
+      - predicted_consumption: estimación (m³)
+      - historical_avg_consumption: promedio histórico para ese lote (si se provee lot_id)
+    """
+    return MLService(db).predict_consumption(payload)
