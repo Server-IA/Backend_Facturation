@@ -1,12 +1,14 @@
 # services.py
+from datetime import datetime, timedelta
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
-from app.facturation.models import Concept, Lot , ConsumptionMeasurement, Request
+from app.facturation.models import Concept, Lot , ConsumptionMeasurement, Request , InvoiceConcept
 from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
-
+from app.payu.models import Invoice, Payment
 from app.ml import (
      get_models
 )
@@ -84,6 +86,7 @@ class MLService:
             content=jsonable_encoder({"success": True, "data": result})
         )
     
+
 
 
 class FacturationService:
@@ -274,3 +277,207 @@ class FacturationService:
             return JSONResponse(status_code=he.status_code, content={"success": False, "data": {"title": "Validación", "message": he.detail}})
         except Exception as e:
             return JSONResponse(status_code=500, content={"success": False, "data": {"title": "Error al inhabilitar concepto", "message": str(e)}})
+        
+class InvoiceService:
+    def __init__(self, db):
+        self.db = db
+
+    def get_invoice_detail(self, invoice_id: int):
+        try:
+            invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+            if not invoice:
+                raise HTTPException(status_code=404, detail="Factura no encontrada")
+            
+            payment = self.db.query(Payment).filter(Payment.invoice_id == invoice_id).first()
+            data_payment = {}
+            if payment:
+                data_payment = {
+                    "payment_id": payment.id,
+                    "payment_method": payment.payment_method,
+                    "payment_date": payment.paid_at,
+                    "amount": payment.amount,
+                    "reference_code": payment.reference_code,
+                    "transaction_id": payment.transaction_id,
+                    "payer_email": payment.payer_email
+                }
+            
+            lots = self.db.query(Lot).filter(Lot.id == invoice.lot_id).first()
+            if not lots:
+                raise HTTPException(status_code=404, detail="Lote no encontrado")
+            
+            user_lots = self.get_user_info_by_lot(lots.id)
+            
+            response_data = {
+                "invoice": {
+                    "factura_id": invoice.id,
+                    "reference_code": invoice.reference_code,
+                    "issuance_date": invoice.issuance_date,
+                    "expiration_date": invoice.expiration_date,
+                    "invoiced_period": invoice.invoiced_period,
+                    "client_name": invoice.client_name,
+                    "client_email": invoice.client_email,
+                    "total_amount": invoice.total_amount,
+                    "lot_id": invoice.lot_id,
+                    "status": invoice.status,
+                    "factus_number": invoice.factus_number,
+                    "cufe": invoice.cufe,
+                    "public_url": invoice.public_url,
+                    "qr_url": invoice.qr_url,
+                    "dian_status": invoice.dian_status,
+                    "zip_sent_at": invoice.zip_sent_at,
+                },
+                "payment": data_payment,
+                "user_lots" : user_lots              
+            }
+
+            return JSONResponse(status_code=200, content={"success": True, "data": jsonable_encoder(response_data)})
+
+        except HTTPException as he:
+            return JSONResponse(status_code=he.status_code, content={"success": False, "data": {"title": "Validación", "message": he.detail}})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "data": {"title": "Error al obtener factura", "message": str(e)}})
+        
+    def get_user_info_by_lot(self, lot_id: int):
+        try:
+            sql = text("""
+                SELECT 
+                    u.id AS user_id,
+                    CONCAT(u.name, ' ', u.first_last_name, ' ', u.second_last_name) AS user_name,
+                    u.email AS user_email,
+                    u.document_number AS user_identification,
+                    l.id AS lot_id,
+                    pl.property_id
+                FROM lot l
+                JOIN property_lot pl ON pl.lot_id = l.id
+                JOIN user_property up ON up.property_id = pl.property_id
+                JOIN users u ON u.id = up.user_id
+                WHERE l.id = :lot_id
+                LIMIT 1
+            """)
+            result = self.db.execute(sql, {"lot_id": lot_id})
+            row = result.fetchone()
+
+            if not row:
+                return {}
+
+            return dict(row._mapping)
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "data": {"message": str(e)}})
+        
+    @staticmethod
+    def generate_reference_code(db: Session) -> str:
+        today = datetime.utcnow().strftime("%Y%m%d")  # ej: 20250513
+        count = db.query(func.count(Invoice.id)).scalar() + 1  # conteo total actual
+        return f"DISR-{today}-{count:04d}"  # ej: DISR-20250513-0007
+    
+    def create_invoice(self, payment_data: dict):
+        try:
+            # validar si ya existe una facturacion pendiente para ese lote
+            lot_id = payment_data["lot_id"]
+            validateInvoice = self.db.query(Invoice).filter(Invoice.lot_id == lot_id).first()
+            if validateInvoice:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "data": {"title": "Facturación pendiente", "message": "Ya existe una facturación pendiente para este lote."},
+                        },
+                    )
+            
+            user_lots = self.get_user_info_by_lot(payment_data["lot_id"])
+            # 1. Generar código de referencia único
+            reference_code = self.generate_reference_code(self.db)
+
+            # Obtener el primer día del mes actual
+            first_day_this_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            # billing_start_date: primer día del mes anterior
+            billing_start_date = (first_day_this_month - timedelta(days=1)).replace(day=1)
+
+            # billing_end_date: último día del mes anterior
+            billing_end_date = first_day_this_month - timedelta(seconds=1)
+
+            invoice = Invoice(
+                reference_code=reference_code,
+                user_id=user_lots["user_id"],
+                client_name=user_lots['user_name'],
+                client_email=user_lots['user_email'],
+                billing_start_date=billing_start_date,
+                billing_end_date=billing_end_date,
+                issuance_date=datetime.utcnow(),
+                expiration_date=datetime.utcnow() + timedelta(days=15),
+                invoiced_period=30,
+                total_amount=0,
+                lot_id=payment_data["lot_id"],
+                status="pendiente"
+            )
+
+            self.db.add(invoice)
+            self.db.commit()
+            self.db.refresh(invoice)
+
+            self.link_consumptions_and_calculate_total(invoice)
+
+            return JSONResponse(status_code=200, content={"success": True, "data": jsonable_encoder(invoice)})
+
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "data": {"message": str(e)}})
+        
+    # Assuming each unit of consumption costs 100
+    def link_consumptions_and_calculate_total(self, invoice):
+        try:
+            sql = text("""
+                SELECT cm.*
+                FROM consumption_measurements cm
+                INNER JOIN request r ON r.id = cm.request_id  
+                WHERE cm.invoice_id IS NULL
+                AND cm.created_at >= :start_date
+                AND r.lot_id = :lot_id
+                AND cm.created_at <= :end_date
+            """)
+
+            result = self.db.execute(sql, {
+                "lot_id": invoice.lot_id,
+                "start_date": invoice.billing_start_date,
+                "end_date": invoice.billing_end_date
+            })
+
+            consumptions = result.fetchall()
+
+            if not consumptions:
+                return  # No consumptions to process
+
+            # consultar los conceptos por lote en Concept y los relacionados
+            concept = self.db.query(Concept).filter(Concept.lote_id == invoice.lot_id).first()
+
+            total = 0
+            for row in consumptions:
+                final_volume = row.final_volume
+                concept_total = 0
+
+                if concept.tipo_id == 1:
+                    concept_total = final_volume + concept.valor
+                elif concept.tipo_id == 2:
+                    concept_total = final_volume - concept.valor
+                elif concept.tipo_id == 3:
+                    concept_total = final_volume * concept.valor
+                elif concept.tipo_id == 4 and concept.valor != 0:
+                    concept_total = final_volume / concept.valor
+                else:
+                    concept_total = final_volume * concept.valor
+
+                total += concept_total
+
+                # 3. Actualizar el consumo usando el ORM
+                consumo_obj = self.db.query(ConsumptionMeasurement).get(row.id)
+                consumo_obj.invoice_id = invoice.id
+                self.db.add(consumo_obj)
+
+            invoice.total_amount = total
+            self.db.commit()
+            self.db.refresh(invoice)
+
+        except Exception as e:
+            raise Exception(f"Error linking consumptions: {e}")
+
+    

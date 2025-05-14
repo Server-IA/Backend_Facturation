@@ -4,10 +4,12 @@ from typing import Dict, Any
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.facturation.services import FacturationService , MLService
+from app.facturation.services import FacturationService , MLService , InvoiceService
 from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
 
-router = APIRouter(prefix="/concepts", tags=["Concepts"])
+
+router = APIRouter(prefix="/facturations", tags=["Facturations"])
+# router_invoice = APIRouter(prefix="/facturations", tags=["Facturation"])
 
 
 @router.get("/", response_model=Dict[str, Any])
@@ -45,6 +47,7 @@ def disable_concept(concept_id: int, db: Session = Depends(get_db)):
     return FacturationService(db).disable_concept(concept_id)
 
 
+
 @router.post(
     "/predict-consumption",
     summary="Predecir consumo de agua",
@@ -61,3 +64,13 @@ def predict_consumption(
       - historical_avg_consumption: promedio histórico para ese lote (si se provee lot_id)
     """
     return MLService(db).predict_consumption(payload)
+
+@router.get("/detail/{invoice_id}")
+def get_invoice_detail(invoice_id: int, db: Session = Depends(get_db)):
+    return InvoiceService(db).get_invoice_detail(invoice_id)
+
+@router.post("/create", status_code=201)
+def create_invoice(payload: dict, db: Session = Depends(get_db)):
+    invoice = InvoiceService(db).create_invoice(payment_data=payload)
+    return invoice
+

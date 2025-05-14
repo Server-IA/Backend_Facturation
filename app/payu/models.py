@@ -13,8 +13,11 @@ class Invoice(Base):
     issuance_date = Column(DateTime, default=datetime.utcnow)
     expiration_date = Column(DateTime, nullable=False)
     invoiced_period = Column(String(32), nullable=False)
+    billing_start_date = Column(DateTime, nullable=False)
+    billing_end_date = Column(DateTime, nullable=False)
     total_amount = Column(Float, nullable=False)
     lot_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=True)
     status = Column(String(20), default="pendiente")
 
     # Nuevos campos para Factus
