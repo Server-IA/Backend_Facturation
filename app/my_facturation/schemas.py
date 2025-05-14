@@ -5,6 +5,7 @@ from datetime import date
 from typing import Optional
 
 class UserInvoice(BaseModel):
+    invoice_id:      int
     reference_code:  str
     property_id:     int
     lot_id:          int

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session , aliased
 from app.payu.models       import Payment , Invoice 
 from app.facturation.models import PaymentInterval, PropertyLot ,PropertyUser , Property , Lot , User , ConsumptionMeasurement , Concept , InvoiceConcept
 from app.facturation.models import Var as StatusVar 
+
 class BillingService:
     def __init__(self, db: Session):
         self.db = db

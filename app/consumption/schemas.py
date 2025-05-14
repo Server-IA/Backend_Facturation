@@ -1,0 +1,29 @@
+# app/consumption/schemas.py
+
+from pydantic import BaseModel
+from datetime import datetime
+from typing import List, Optional
+
+class ConsumptionRecord(BaseModel):
+    property_id:      int
+    lot_id:           int
+    payment_interval: Optional[str]
+    measurement_date: datetime
+    final_volume:     float
+
+class ConsumptionStats(BaseModel):
+    registered_avg:    float   # promedio mensual registrado
+    projected_avg:     float   # promedio mensual proyectado (IA)
+    variation_percent: float   # variación esperada
+
+class ConsumptionDetail(BaseModel):
+    measurement_id:    int
+    property_id:       int
+    property_name:     str
+    lot_id:            int
+    lot_name:          str
+    # asumimos que tu modelo Lot no tiene tipo de cultivo; omitimos o ponemos Optional[str]
+    registered_avg:    float
+    projected_avg:     float
+    variation_percent: float
+    records:           List[ConsumptionRecord]
