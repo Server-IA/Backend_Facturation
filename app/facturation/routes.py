@@ -4,10 +4,11 @@ from typing import Dict, Any
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.facturation.services import FacturationService
+from app.facturation.services import FacturationService, InvoiceService
 from app.facturation.schemas import ConceptCreate, ConceptUpdate
 
-router = APIRouter(prefix="/concepts", tags=["Concepts"])
+router = APIRouter(prefix="/facturations", tags=["Facturations"])
+# router_invoice = APIRouter(prefix="/facturations", tags=["Facturation"])
 
 
 @router.get("/", response_model=Dict[str, Any])
@@ -43,3 +44,12 @@ def disable_concept(concept_id: int, db: Session = Depends(get_db)):
     Inhabilita un concepto (estado_id = 28).
     """
     return FacturationService(db).disable_concept(concept_id)
+
+@router.get("/detail/{invoice_id}")
+def get_invoice_detail(invoice_id: int, db: Session = Depends(get_db)):
+    return InvoiceService(db).get_invoice_detail(invoice_id)
+
+@router.post("/create", status_code=201)
+def create_invoice(payload: dict, db: Session = Depends(get_db)):
+    invoice = InvoiceService(db).create_invoice(payment_data=payload)
+    return invoice
