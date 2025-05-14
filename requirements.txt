@@ -35,6 +35,7 @@ typing_extensions==4.12.2
 uvicorn==0.34.0
 python-multipart>=0.0.6
 firebase_admin
+<<<<<<< HEAD
 pydantic==2.10.6
 pydantic_core==2.27.2
 pyserial
@@ -56,3 +57,7 @@ gensim==4.3.3
 sentencepiece==0.2.0
 transformers==4.51.3
 FuzzyTM==2.0.9
+pydantic[email]
+pyserial
+lxml>=4.9.0
+fpdf>=1.7.2
