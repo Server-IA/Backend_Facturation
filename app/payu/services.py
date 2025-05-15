@@ -101,7 +101,7 @@ class PayUService:
             # validar si la factura ya fue pagada
             if invoice.status == 'pagada':
                 return JSONResponse(status_code=400, content={"success": False, "data": {"tittle" : "La factura ya fue pagada"}})
-                                                                                         
+
 
             users = self.get_user_info_by_lot(invoice.lot_id)
 
@@ -138,17 +138,53 @@ class PayUService:
                             "TX_TAX": {"value": 0, "currency": CURRENCY},
                             "TX_TAX_RETURN_BASE": {"value": 0, "currency": CURRENCY}
                         },
-                        "buyer": payment_data["buyer"],
-                        "shippingAddress": payment_data["shippingAddress"]
+                        "buyer": {
+                            "fullName": users["user_name"],
+                            "emailAddress": users["user_email"],
+                            "contactPhone": users["user_phone"],
+                            "dniNumber": users["user_identification"],
+                            "shippingAddress": {
+                                "street1": "Carrera 123 # 456",
+                                "street2": "",
+                                "city": "Neiva",
+                                "state": "Huila",
+                                "country": "CO",
+                                "postalCode": "410001",
+                                "phone": "3001234567"
+                            }
+                        },
+                        "shippingAddress": {
+                            "street1": "Carrera 123 # 456",
+                            "street2": "",
+                            "city": "Neiva",
+                            "state": "Huila",
+                            "country": "CO",
+                            "postalCode": "410001",
+                            "phone": "3001234567"
+                        }
                     },
-                    "payer": payment_data["payer"],
+                    "payer": {
+                        "fullName": users["user_name"],
+                        "emailAddress": users["user_email"],
+                        "contactPhone": users["user_phone"],
+                        "dniNumber": users["user_identification"],
+                        "billingAddress": {
+                            "street1": "Carrera 123 # 456",
+                            "street2": "",
+                            "city": "Neiva",
+                            "state": "Huila",
+                            "country": "CO",
+                            "postalCode": "410001",
+                            "phone": "3001234567"
+                        }
+                    },
                     "extraParameters": {
                         "RESPONSE_URL": "https://backend-facturation.onrender.com/payu/retorno",
                         "PSE_REFERENCE1": "127.0.0.1",
                         "FINANCIAL_INSTITUTION_CODE": payment_data["bankCode"],
                         "USER_TYPE": "N",
                         "PSE_REFERENCE2": "CC",
-                        "PSE_REFERENCE3": payment_data["payer"]["dniNumber"]
+                        "PSE_REFERENCE3": users["user_identification"]
                     },
                     "type": "AUTHORIZATION_AND_CAPTURE",
                     "paymentMethod": "PSE",
@@ -175,7 +211,10 @@ class PayUService:
             self.db.add(log)
             self.db.commit()
 
-            return JSONResponse(status_code=200, content={"success": True, "data": data})
+            if data["transactionResponse"]["state"] == 'DECLINED':
+                return JSONResponse(status_code=200, content={"success": True, "data": data["transactionResponse"]["paymentNetworkResponseErrorMessage"]})
+            else:
+                return JSONResponse(status_code=200, content={"success": True, "data": data["transactionResponse"]["extraParameters"]["BANK_URL"]})
 
         except HTTPException as he:
             return JSONResponse(
@@ -201,6 +240,7 @@ class PayUService:
                     CONCAT(u.name, ' ', u.first_last_name, ' ', u.second_last_name) AS user_name,
                     u.email AS user_email,
                     u.document_number AS user_identification,
+                    u.phone AS user_phone,
                     l.id AS lot_id,
                     pl.property_id
                 FROM lot l
