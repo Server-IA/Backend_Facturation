@@ -45,9 +45,9 @@ class FactusService:
                 "payment_due_date": (invoice.expiration_date or datetime.utcnow() + timedelta(days=15)).strftime("%Y-%m-%d"),
                 "payment_method_code": "10",  # Transferencia
                 "billing_period": {
-                    "start_date": invoice.issuance_date.strftime("%Y-%m-%d"),
+                    "start_date": invoice.billing_start_date.strftime("%Y-%m-%d"),
                     "start_time": "00:00:00",
-                    "end_date": invoice.expiration_date.strftime("%Y-%m-%d") if invoice.expiration_date else (datetime.utcnow() + timedelta(days=15)).strftime("%Y-%m-%d"),
+                    "end_date": invoice.billing_end_date.strftime("%Y-%m-%d") if invoice.billing_start_date else (datetime.utcnow() + timedelta(days=15)).strftime("%Y-%m-%d"),
                     "end_time": "23:59:59"
                 },
                 "customer": {
