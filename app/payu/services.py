@@ -313,7 +313,12 @@ class PayUProcessor:
                 "message": "Pago registrado y factura generada",
                 "data": result
             }
-
+        elif pago.status == "6":
+            return {
+                "success": True,
+                "message": "Pago rechazado",
+                "data": pago.status
+            }
         return {
             "success": True,
             "message": "Pago registrado sin generar factura",
