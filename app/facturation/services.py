@@ -1,6 +1,6 @@
 # services.py
 from datetime import datetime, timedelta
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -370,25 +370,44 @@ class InvoiceService:
                 return  # No consumptions to process
 
             # consultar los conceptos por lote en Concept y los relacionados
-            concept = self.db.query(Concept).filter(Concept.lote_id == invoice.lot_id).first()
+            concepts = self.db.query(Concept).filter(
+                or_(
+                    Concept.lote_id == invoice.lot_id,
+                    Concept.scope_id == 1
+                )
+            ).all()
 
             total = 0
             for row in consumptions:
                 final_volume = row.final_volume
-                concept_total = 0
+                concept_total_consump = 0
+                for concept in concepts:
+                    concept_total = 0
+                    if concept.tipo_id == 1:
+                        concept_total = concept_total + concept.valor
+                    elif concept.tipo_id == 2:
+                        concept_total = concept_total - concept.valor
+                    elif concept.tipo_id == 3:
+                        concept_total = concept_total + (final_volume * concept.valor)
+                    elif concept.tipo_id == 4 and concept.valor != 0:
+                        concept_total = concept_total / concept.valor
+                    else:
+                        concept_total = concept_total + (final_volume * concept.valor)
 
-                if concept.tipo_id == 1:
-                    concept_total = final_volume + concept.valor
-                elif concept.tipo_id == 2:
-                    concept_total = final_volume - concept.valor
-                elif concept.tipo_id == 3:
-                    concept_total = final_volume * concept.valor
-                elif concept.tipo_id == 4 and concept.valor != 0:
-                    concept_total = final_volume / concept.valor
-                else:
-                    concept_total = final_volume * concept.valor
+                    invoice_concept = InvoiceConcept(
+                        invoice_id=invoice.id,
+                        concept_id=concept.id,
+                        total_amount=concept_total,
+                        consumption_measurement_id=row.id
+                    )
 
-                total += concept_total
+                    self.db.add(invoice_concept)
+                    self.db.commit()
+                    self.db.refresh(invoice_concept)
+
+                    concept_total_consump += concept_total
+
+                total += concept_total_consump
 
                 # 3. Actualizar el consumo usando el ORM
                 consumo_obj = self.db.query(ConsumptionMeasurement).get(row.id)
