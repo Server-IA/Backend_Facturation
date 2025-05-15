@@ -21,26 +21,17 @@ def list_concepts(db: Session = Depends(get_db)):
     return FacturationService(db).list_concepts()
 
 
+@router.get("/concept_types", response_model=List[ConceptTypeOut])
+def get_concept_types(db: Session = Depends(get_db)):
+    return FacturationService(db).list_concept_types()
+
+@router.get("/scope_types", response_model=List[ScopeTypeOut])
+def get_scope_types(db: Session = Depends(get_db)):
+    return FacturationService(db).list_scope_types()
+
 @router.get("/{concept_id}", response_model=Dict[str, Any], summary="Ver detalles de un concepto")
 def get_concept(concept_id: int, db: Session = Depends(get_db)):
     return FacturationService(db).get_concept(concept_id)
-    
-    
-@router.get(
-    "/concept_types",
-    response_model=List[ConceptTypeOut],
-)
-def get_concept_types(db: Session = Depends(get_db)):
-    """Lista todos los tipos de concepto."""
-    return FacturationService(db).list_concept_types()
-
-@router.get(
-    "/scope_types",
-    response_model=List[ScopeTypeOut],
-)
-def get_scope_types(db: Session = Depends(get_db)):
-    """Lista todos los scopes de alcance."""
-    return FacturationService(db).list_scope_types()
 
 @router.post(
     "/",
