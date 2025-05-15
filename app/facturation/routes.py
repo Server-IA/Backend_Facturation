@@ -1,11 +1,11 @@
 # routes.py
-from fastapi import APIRouter, Depends , Body
-from typing import Dict, Any
+from fastapi import APIRouter, Depends , Body , HTTPException
+from typing import Dict, Any , List
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.facturation.services import FacturationService , MLService , InvoiceService
-from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
+from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput , ConceptTypeOut , ScopeTypeOut , ConceptResponse
 
 
 router = APIRouter(prefix="/facturations", tags=["Facturations"])
@@ -21,9 +21,45 @@ def list_concepts(db: Session = Depends(get_db)):
     return FacturationService(db).list_concepts()
 
 
-@router.post("/", response_model=Dict[str, Any], status_code=201)
-def add_concept(payload: ConceptCreate, db: Session = Depends(get_db)):
-    return FacturationService(db).create_concept(payload)
+
+@router.get(
+    "/concept_types",
+    response_model=List[ConceptTypeOut],
+)
+def get_concept_types(db: Session = Depends(get_db)):
+    """Lista todos los tipos de concepto."""
+    return FacturationService(db).list_concept_types()
+
+@router.get(
+    "/scope_types",
+    response_model=List[ScopeTypeOut],
+)
+def get_scope_types(db: Session = Depends(get_db)):
+    """Lista todos los scopes de alcance."""
+    return FacturationService(db).list_scope_types()
+
+@router.post(
+    "/",
+    response_model=ConceptResponse,
+    status_code=201,
+)
+def add_concept(
+    payload: ConceptCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Crea un nuevo concepto.
+    El campo estado_id no es necesario: se asigna Activo (27) por defecto.
+    """
+    try:
+        concept = FacturationService(db).create_concept(payload)
+        # FastAPI usará ConceptResponse para serializar el SQLAlchemy model
+        return ConceptResponse(success=True, data=concept)
+    except HTTPException as he:
+        # Propaga errores de validación del servicio
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/{concept_id}", response_model=Dict[str, Any])

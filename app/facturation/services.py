@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
-from app.facturation.models import Concept, Lot , ConsumptionMeasurement, Request , InvoiceConcept
+from app.facturation.models import Concept, Lot , ConsumptionMeasurement, Request , InvoiceConcept , ConceptType, ScopeType
 from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
 from app.payu.models import Invoice, Payment
 from app.ml import (
@@ -170,66 +170,78 @@ class FacturationService:
                 status_code=500,
                 content={"success": False, "data": {"title": "Error al listar conceptos", "message": str(e)}}
             )
+        
+    def list_concept_types(self):
+        """
+        Devuelve todos los tipos de concepto ordenados por nombre.
+        """
+        return (
+            self.db
+               .query(ConceptType)
+               .order_by(ConceptType.name)
+               .all()
+        )
+
+    def list_scope_types(self):
+        """
+        Devuelve todos los scopes de alcance ordenados por nombre.
+        """
+        return (
+            self.db
+               .query(ScopeType)
+               .order_by(ScopeType.name)
+               .all()
+        )
 
     def create_concept(self, payload: ConceptCreate):
+        """
+        Crea un nuevo Concept. El estado viene por defecto (Activo=27) si no se especifica.
+        Valida reglas de negocio según scope.
+        """
         try:
-            # Validar estado_id o asignar default Activo=27
-            if payload.estado_id is None:
-                estado_id = 27
-            elif payload.estado_id in (27, 28):
-                estado_id = payload.estado_id
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail="estado_id inválido: sólo se permiten 27 (Activo) o 28 (Inactivo)"
-                )
+            # 1) Validar estado_id o asignar default Activo=27
+            estado_id = payload.estado_id if getattr(payload, 'estado_id', None) in (27, 28) else 27
 
-            # Validar scope General (1): no se permiten predio/lote
+            # 2) Validar scope General (1): no predio ni lote
             if payload.scope_id == 1 and (payload.predio_id or payload.lote_id):
                 raise HTTPException(400, "No puede especificar predio_id ni lote_id cuando scope es 'General'")
 
+            # 3) Validar scope Específico (2): predio y lote obligatorios y relacionados
             if payload.scope_id == 2:
                 if payload.predio_id is None or payload.lote_id is None:
                     raise HTTPException(400, "predio_id y lote_id son obligatorios cuando scope es 'Específico'")
                 lote = self.db.get(Lot, payload.lote_id)
                 if not lote:
                     raise HTTPException(400, "Lote no encontrado")
-                # Validar many-to-many via property_lot
-                predio_ids = [prop.id for prop in lote.properties]
+                # lote.properties es relación PropertyLot -> Property
+                predio_ids = [pl.property_id for pl in lote.properties]
                 if payload.predio_id not in predio_ids:
                     raise HTTPException(400, "El lote no está asociado al predio indicado")
 
-            # Construir objeto usando estado_id validado
+            # 4) Crear objeto Concept
             data = payload.model_dump(exclude_unset=True)
             data['estado_id'] = estado_id
-            obj = Concept(**data)
+            concept = Concept(**data)
 
-            self.db.add(obj)
+            self.db.add(concept)
             self.db.commit()
-            self.db.refresh(obj)
+            self.db.refresh(concept)
+            return concept
 
-            return JSONResponse(status_code=201, content={"success": True, "data": jsonable_encoder(obj)})
-
-        except HTTPException as he:
-            return JSONResponse(
-                status_code=he.status_code,
-                content={"success": False, "data": {"title": "Validación", "message": he.detail}}
-            )
+        except HTTPException:
+            raise
         except Exception as e:
             msg = str(e)
-            # Manejo de violaciones de FK (scope, tipo, predio, lote)
+            # Manejo de violaciones FK
             if 'concepts_scope_id_fkey' in msg:
-                title, message = "Error referencial", "scope_id no existe"
-            elif 'concepts_tipo_id_fkey' in msg:
-                title, message = "Error referencial", "tipo_id no existe"
-            elif 'concepts_predio_id_fkey' in msg:
-                title, message = "Error referencial", "predio_id no existe"
-            elif 'concepts_lote_id_fkey' in msg:
-                title, message = "Error referencial", "lote_id no existe"
-            else:
-                return JSONResponse(status_code=500, content={"success": False, "data": {"title": "Error al crear concepto", "message": msg}})
-            return JSONResponse(status_code=400, content={"success": False, "data": {"title": title, "message": message}})
-
+                raise HTTPException(400, "scope_id no existe")
+            if 'concepts_tipo_id_fkey' in msg:
+                raise HTTPException(400, "tipo_id no existe")
+            if 'concepts_predio_id_fkey' in msg:
+                raise HTTPException(400, "predio_id no existe")
+            if 'concepts_lote_id_fkey' in msg:
+                raise HTTPException(400, "lote_id no existe")
+            raise HTTPException(500, msg)
 
     def update_concept(self, concept_id: int, payload: ConceptUpdate):
         try:
