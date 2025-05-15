@@ -295,40 +295,51 @@ class FacturationService:
             raise HTTPException(500, msg)
 
     def update_concept(self, concept_id: int, payload: ConceptUpdate):
+        """
+        Actualiza un concepto existente, validando scope y la relación lote↔predio
+        sin usar atributos inexistentes como lote.property_id.
+        """
         try:
             obj = self.db.get(Concept, concept_id)
             if not obj:
-                raise HTTPException(404, "Concepto no encontrado")
+                raise HTTPException(status_code=404, detail="Concepto no encontrado")
 
             data = payload.model_dump(exclude_unset=True)
-            scope    = data.get("scope_id", obj.scope_id)
-            predio   = data.get("predio_id", obj.predio_id)
-            lote_id  = data.get("lote_id",   obj.lote_id)
+            scope     = data.get("scope_id", obj.scope_id)
+            predio_id = data.get("predio_id", obj.predio_id)
+            lote_id   = data.get("lote_id",   obj.lote_id)
 
-            # Rechazar predio/lote si cambian a General
-            if scope == 1 and (predio or lote_id):
+            # 1) Si cambian a General (1), no se permiten predio ni lote
+            if scope == 1 and (predio_id or lote_id):
                 raise HTTPException(
                     status_code=400,
                     detail="No puede especificar predio_id ni lote_id cuando scope es 'General'"
                 )
-            # Validar específico
+
+            # 2) Si es Específico (2), validar ambos y su relación
             if scope == 2:
-                if predio is None or lote_id is None:
+                if predio_id is None or lote_id is None:
                     raise HTTPException(
                         status_code=400,
                         detail="predio_id y lote_id son obligatorios cuando scope es 'Específico'"
                     )
                 lote = self.db.get(Lot, lote_id)
-                if not lote or lote.property_id != predio:
+                if not lote:
+                    raise HTTPException(status_code=400, detail="Lote no encontrado")
+                # Ahora obtenemos los predio.id asociados al lote
+                predio_ids = [p.id for p in lote.properties]
+                if predio_id not in predio_ids:
                     raise HTTPException(
                         status_code=400,
                         detail="El lote no pertenece al predio indicado"
                     )
 
-            for k, v in data.items():
-                setattr(obj, k, v)
+            # 3) Aplicar cambios y persistir
+            for attr, val in data.items():
+                setattr(obj, attr, val)
             self.db.commit()
             self.db.refresh(obj)
+
             return JSONResponse(
                 status_code=200,
                 content={"success": True, "data": jsonable_encoder(obj)}
