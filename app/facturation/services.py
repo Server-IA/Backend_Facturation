@@ -251,30 +251,29 @@ class FacturationService:
         Valida reglas de negocio según scope.
         """
         try:
-            # 1) Validar estado_id o asignar default Activo=27
-            estado_id = payload.estado_id if getattr(payload, 'estado_id', None) in (27, 28) else 27
+            # 1) Estado por defecto (Activo=27 o Inactivo=28 si se envía y es válido)
+            estado_id = payload.estado_id if getattr(payload, "estado_id", None) in (27, 28) else 27
 
-            # 2) Validar scope General (1): no predio ni lote
+            # 2) Scope General (1): no se permiten predio_id ni lote_id
             if payload.scope_id == 1 and (payload.predio_id or payload.lote_id):
                 raise HTTPException(400, "No puede especificar predio_id ni lote_id cuando scope es 'General'")
 
-            # 3) Validar scope Específico (2): predio y lote obligatorios y relacionados
+            # 3) Scope Específico (2): predio_id y lote_id obligatorios y deben coincidir
             if payload.scope_id == 2:
                 if payload.predio_id is None or payload.lote_id is None:
                     raise HTTPException(400, "predio_id y lote_id son obligatorios cuando scope es 'Específico'")
                 lote = self.db.get(Lot, payload.lote_id)
                 if not lote:
                     raise HTTPException(400, "Lote no encontrado")
-                # lote.properties es relación PropertyLot -> Property
-                predio_ids = [pl.property_id for pl in lote.properties]
+                # Ahora usamos p.id en vez de un atributo inexistente
+                predio_ids = [p.id for p in lote.properties]
                 if payload.predio_id not in predio_ids:
                     raise HTTPException(400, "El lote no está asociado al predio indicado")
 
-            # 4) Crear objeto Concept
+            # 4) Persistir el Concept
             data = payload.model_dump(exclude_unset=True)
-            data['estado_id'] = estado_id
+            data["estado_id"] = estado_id
             concept = Concept(**data)
-
             self.db.add(concept)
             self.db.commit()
             self.db.refresh(concept)
@@ -284,14 +283,14 @@ class FacturationService:
             raise
         except Exception as e:
             msg = str(e)
-            # Manejo de violaciones FK
-            if 'concepts_scope_id_fkey' in msg:
+            # Mapeo de violaciones FK a mensajes claros
+            if "concepts_scope_id_fkey" in msg:
                 raise HTTPException(400, "scope_id no existe")
-            if 'concepts_tipo_id_fkey' in msg:
+            if "concepts_tipo_id_fkey" in msg:
                 raise HTTPException(400, "tipo_id no existe")
-            if 'concepts_predio_id_fkey' in msg:
+            if "concepts_predio_id_fkey" in msg:
                 raise HTTPException(400, "predio_id no existe")
-            if 'concepts_lote_id_fkey' in msg:
+            if "concepts_lote_id_fkey" in msg:
                 raise HTTPException(400, "lote_id no existe")
             raise HTTPException(500, msg)
 
