@@ -21,7 +21,11 @@ def list_concepts(db: Session = Depends(get_db)):
     return FacturationService(db).list_concepts()
 
 
-
+@router.get("/{concept_id}", response_model=Dict[str, Any], summary="Ver detalles de un concepto")
+def get_concept(concept_id: int, db: Session = Depends(get_db)):
+    return FacturationService(db).get_concept(concept_id)
+    
+    
 @router.get(
     "/concept_types",
     response_model=List[ConceptTypeOut],

@@ -171,6 +171,58 @@ class FacturationService:
                 content={"success": False, "data": {"title": "Error al listar conceptos", "message": str(e)}}
             )
         
+    def get_concept(self, concept_id: int):
+        """
+        Obtiene un concepto por su ID y devuelve todos los campos,
+        incluyendo los nombres de estado, scope, tipo, predio y lote
+        en el mismo nivel.
+        """
+        try:
+            c = (
+                self.db
+                    .query(Concept)
+                    .join(Concept.scope)
+                    .join(Concept.tipo)
+                    .join(Concept.estado)
+                    .outerjoin(Concept.property)
+                    .outerjoin(Concept.lot)
+                    .filter(Concept.id == concept_id)
+                    .first()
+            )
+            if not c:
+                return JSONResponse(
+                    status_code=404,
+                    content={"success": False, "data": {"title": "Concepto", "message": "Concepto no encontrado"}}
+                )
+
+            result = {
+                "id":            c.id,
+                "nombre":        c.nombre,
+                "descripcion":   c.descripcion,
+                "valor":         str(c.valor),
+                "scope_id":      c.scope.id,
+                "scope_name":    c.scope.name,
+                "tipo_id":       c.tipo.id,
+                "tipo_name":     c.tipo.name,
+                "estado_id":     c.estado.id,
+                "estado_name":   c.estado.name,
+                "predio_id":     c.property.id   if c.property else None,
+                "predio_name":   c.property.name if c.property else None,
+                "lote_id":       c.lot.id        if c.lot else None,
+                "lote_name":     c.lot.name      if c.lot else None,
+                "created_at":    c.created_at.isoformat(),
+                "updated_at":    c.updated_at.isoformat(),
+            }
+            return JSONResponse(status_code=200, content={"success": True, "data": result})
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "data": {"title": "Error al obtener concepto", "message": str(e)}}
+            )
+
     def list_concept_types(self):
         """
         Devuelve todos los tipos de concepto ordenados por nombre.
