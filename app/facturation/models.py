@@ -101,6 +101,9 @@ class InvoiceConcept(Base):
 
     concept_id = Column(Integer, ForeignKey('concepts.id'), primary_key=True)
     invoice_id = Column(Integer, ForeignKey('invoice.id'),  primary_key=True)
+    consumption_measurement_id = Column(Integer, ForeignKey('consumption_measurements.id'),  primary_key=True)
+    total_amount = Column(Numeric(20, 2), nullable=False)
+
 
 
 class PropertyUser(Base):
