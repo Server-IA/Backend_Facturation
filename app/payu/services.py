@@ -98,6 +98,11 @@ class PayUService:
             # 2. Crear factura antes de intentar el pago
             invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
 
+            # validar si la factura ya fue pagada
+            if invoice.status == 'pagada':
+                return JSONResponse(status_code=400, content={"success": False, "data": {"tittle" : "La factura ya fue pagada"}})
+                                                                                         
+
             users = self.get_user_info_by_lot(invoice.lot_id)
 
             # 3. Generar firma para PayU
@@ -248,6 +253,15 @@ class PayUProcessor:
         self.db.add(pago)
         self.db.commit()
         self.db.refresh(pago)
+
+        # 6. Guardar log de intento de pago
+        log = PaymentLog(
+            reference_code=reference_code,
+            invoice_id=log.invoice_id,
+            payload=data
+        )
+        self.db.add(log)
+        self.db.commit()
 
         # 4. Generar factura electrónica si el estado es aprobado (4)
         if pago.status == "4":
