@@ -107,3 +107,17 @@ class ConceptResponse(BaseModel):
     data: ConceptOut
 
     model_config = {"from_attributes": True}
+    
+
+class PredictByLot(BaseModel):
+    lot_id: int
+
+class ConsumptionPredictionOut(BaseModel):
+    prediccion_consumo_base: float
+    promedio_historico_consumo: float
+    prediccion_lluvia_mm: float
+    factor_ajuste_por_clase: float
+    consumo_ajustado_final: float
+
+    class Config:
+        orm_mode = True
