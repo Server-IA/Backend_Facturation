@@ -306,16 +306,12 @@ class PayUProcessor:
 
         # 4. Generar factura electrónica si el estado es aprobado (4)
         if pago.status == "4":
-            invoice = self.db.query(Invoice).filter(Invoice.id == log.invoice_id).first()
-            payu = PayUService(self.db)
-            users = payu.get_user_info_by_lot(invoice.lot_id)
-            # pass
-            factus = FactusService(self.db)
-            result = factus.generate_invoice_from_payment(pago, users)
+            # generar envio de facturas
+
             return {
                 "success": True,
                 "message": "Pago registrado y factura generada",
-                "data": result
+                "data": pago.status
             }
         elif pago.status == "6":
             return {

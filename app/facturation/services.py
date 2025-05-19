@@ -1,4 +1,5 @@
 # services.py
+from app.factus.services import FactusService
 import joblib
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -451,6 +452,8 @@ class InvoiceService:
                     CONCAT(u.name, ' ', u.first_last_name, ' ', u.second_last_name) AS user_name,
                     u.email AS user_email,
                     u.document_number AS user_identification,
+                    u.phone AS user_phone,
+                    u.address AS user_address,
                     l.id AS lot_id,
                     pl.property_id
                 FROM lot l
@@ -489,6 +492,33 @@ class InvoiceService:
                         "data": {"title": "Facturación pendiente", "message": "Ya existe una facturación pendiente para este lote."},
                         },
                     )
+
+            # sql = text("""
+            #     SELECT cm.*
+            #     FROM consumption_measurements cm
+            #     INNER JOIN request r ON r.id = cm.request_id  
+            #     WHERE cm.invoice_id IS NULL
+            #     AND cm.created_at >= :start_date
+            #     AND r.lot_id = :lot_id
+            #     AND cm.created_at <= :end_date
+            # """)
+
+            # result = self.db.execute(sql, {
+            #     "lot_id": invoice.lot_id,
+            #     "start_date": invoice.billing_start_date,
+            #     "end_date": invoice.billing_end_date
+            # })
+
+            # consumptions = result.fetchall()
+
+            # if not consumptions:
+            #     return JSONResponse(
+            #         status_code=400,
+            #         content={
+            #             "success": False,
+            #             "data": {"title": "Facturación pendiente", "message": "No se puede crear la factura porque no existen consumos."},
+            #             },
+            #         )
             
             user_lots = self.get_user_info_by_lot(payment_data["lot_id"])
             # 1. Generar código de referencia único
@@ -523,6 +553,13 @@ class InvoiceService:
             self.db.refresh(invoice)
 
             self.link_consumptions_and_calculate_total(invoice)
+
+            # pass
+            factus = FactusService(self.db)
+            result = factus.generate_invoice_from_payment(invoice, user_lots)
+
+            if result['success'] is False:
+                return JSONResponse(status_code=400, content=result)
 
             return JSONResponse(status_code=200, content={"success": True, "data": jsonable_encoder(invoice)})
 
