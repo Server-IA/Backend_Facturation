@@ -9,7 +9,9 @@ from app.consumption.routes import router as consumption
 from app.middlewares import setup_middlewares
 from app.exceptions import setup_exception_handlers
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 
+load_dotenv()
 # Importa la función que carga los modelos
 from app.ml import get_models
 
@@ -20,7 +22,6 @@ app = FastAPI(
 )
 
 # Servir carpeta de facturas estáticas
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 setup_middlewares(app)
 setup_exception_handlers(app)

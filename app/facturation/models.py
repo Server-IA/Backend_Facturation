@@ -65,6 +65,19 @@ class Property(Base):
     )
 
 
+class TypeCrop(Base):
+    __tablename__ = 'type_crop'
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    name                = Column(String(100), nullable=False)
+    harvest_time        = Column(Integer, nullable=False)
+    payment_interval_id = Column(Integer, ForeignKey('payment_interval.id'), nullable=False)
+    state_id            = Column(Integer, ForeignKey('vars.id'), nullable=False)
+
+    payment_interval = relationship('PaymentInterval')
+    state            = relationship('Var')
+    lots             = relationship('Lot', back_populates='type_crop')
+
 class Lot(Base):
     __tablename__ = 'lot'
 
@@ -78,13 +91,34 @@ class Lot(Base):
     freedom_tradition_certificate  = Column(String, nullable=True)
     planting_date                  = Column(Date, nullable=True)
     estimated_harvest_date         = Column(Date, nullable=True)
-    payment_interval               =Column(Integer,nullable=False)
-    State = Column("State", Integer, ForeignKey("vars.id"), default=5, nullable=False)
-    vars  = relationship("Var", foreign_keys=[State])
-    properties                     = relationship(
-        "Property",
-        secondary="property_lot",
-        back_populates="lots",
+
+    payment_interval_id = Column(
+        'payment_interval',
+        Integer,
+        ForeignKey('payment_interval.id'),
+        nullable=False
+    )
+    payment_interval = relationship(
+        'PaymentInterval',
+        primaryjoin='Lot.payment_interval_id==PaymentInterval.id'
+    )
+
+    state_id = Column(
+        'State',
+        Integer,
+        ForeignKey('vars.id'),
+        default=5,
+        nullable=False
+    )
+    state    = relationship('Var', foreign_keys=[state_id])
+
+    type_crop_id = Column(Integer, ForeignKey('type_crop.id'), nullable=False)
+    type_crop    = relationship('TypeCrop', back_populates='lots')
+
+    properties = relationship(
+        'Property',
+        secondary='property_lot',
+        back_populates='lots'
     )
 
 
