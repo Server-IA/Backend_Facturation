@@ -341,6 +341,11 @@ class BillingService:
         """
         U = aliased(User)
 
+        payment_status_map = {
+            4: "Aprobado",
+            6: "Declinado"
+        }
+
         q = (
             self.db.query(
                 Invoice.reference_code.label("invoice_number"),
@@ -350,15 +355,23 @@ class BillingService:
                 Payment.payment_method.label("payment_method"),
                 Payment.amount.label("paid_amount"),
                 Payment.status.label("payment_status_id"),   # repetimos el código
-                Payment.status.label("payment_status_name")  # y el nombre
-            )
+                # Payment.status.label("payment_status_name")  # y el nombre
+            )   
             .select_from(Payment)
             .join(Invoice, Payment.invoice_id == Invoice.id)
             .outerjoin(U, Invoice.user_id == U.id)
             .order_by(Payment.paid_at.desc())
         )
 
-        return [row._asdict() for row in q.all()]
+        # Convertir a diccionario y agregar el nombre del estado
+        result = []
+        for row in q.all():
+            row_dict = row._asdict()
+            status_id = int(row_dict["payment_status_id"])
+            row_dict["payment_status_name"] = payment_status_map.get(status_id, "Desconocido")
+            result.append(row_dict)
+
+        return result
 
 
     def get_payment_detail(self, payment_id: int):
