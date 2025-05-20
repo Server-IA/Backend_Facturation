@@ -206,8 +206,8 @@ class FactusService:
             ruta_pdf = self.guardar_pdf_en_firebase(response_pdf.content, file_name)
 
             # Guardar en la base de datos
-            invoice.pdf_url = ruta_xml
-            invoice.xml_url = ruta_pdf
+            invoice.pdf_url = ruta_pdf
+            invoice.xml_url = ruta_xml
             self.db.commit()
             self.db.refresh(invoice)
 
