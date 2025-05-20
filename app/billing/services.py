@@ -124,7 +124,7 @@ class BillingService:
             )
             .select_from(Invoice)
             .outerjoin(Lot, Invoice.lot_id == Lot.id)
-            .outerjoin(PI, Lot.payment_interval == PI.id)
+            .outerjoin(PI, Lot.payment_interval_id == PI.id)
             .outerjoin(PropertyLot, PropertyLot.lot_id == Lot.id)
             .outerjoin(
                 PropertyUser,
