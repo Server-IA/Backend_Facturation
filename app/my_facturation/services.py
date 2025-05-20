@@ -37,7 +37,7 @@ class MyFacturationService:
 
         rows = (
             self.db.query(
-                Invoice.id.label("invoice_id"),             
+                Invoice.id.label("invoice_id"),
                 Invoice.reference_code,
                 PropertyLot.property_id,
                 Invoice.lot_id,
@@ -49,7 +49,7 @@ class MyFacturationService:
             .select_from(Invoice)
             .filter(Invoice.user_id == user_id)
             .join(Lot, Invoice.lot_id == Lot.id)
-            .outerjoin(PI, Lot.payment_interval == PI.id)
+            .outerjoin(PI, Lot.payment_interval_id == PI.id)    # <-- aquí usamos payment_interval_id
             .join(PropertyLot, PropertyLot.lot_id == Lot.id)
             .order_by(Invoice.expiration_date.desc())
             .all()
