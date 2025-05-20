@@ -343,7 +343,7 @@ class BillingService:
 
         payment_status_map = {
             4: "Aprobado",
-            6: "Declinado"
+            6: "Rechazado"
         }
 
         q = (
@@ -389,6 +389,11 @@ class BillingService:
         pago: Payment = self.db.query(Payment).filter(Payment.id == payment_id).first()
         if not pago:
             raise HTTPException(status_code=404, detail="Pago no encontrado")
+        
+        payment_status_map = {
+            4: "Aprobado",
+            6: "Rechazado"
+        }
 
         # Nombre del pagador vía invoice.user_id
         payer_name = None
@@ -403,7 +408,7 @@ class BillingService:
             "payer_name":           payer_name,
             "transaction_amount":   float(pago.amount),
             "payment_status_id":    pago.status,  # texto como “id”
-            "payment_status_name":  pago.status,  # mismo texto como “nombre”
+            "payment_status_name":  payment_status_map.get(int(pago.status), "Desconocido"),  # mismo texto como “nombre”
             "payment_date":         pago.paid_at,
             "reference_code":       pago.reference_code,
             "payer_email":          pago.payer_email,
