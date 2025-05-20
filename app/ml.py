@@ -1,12 +1,11 @@
-# app/ml.py
-
 import sys
 import numpy
 import joblib
 import time
 from pathlib import Path
 from functools import lru_cache
-
+from dotenv import load_dotenv
+load_dotenv()
 # ——— Parche para compatibilidad numpy ———
 # 1) redirige numpy._core → numpy.core
 sys.modules['numpy._core'] = numpy.core
@@ -49,9 +48,9 @@ def get_models():
         print(f"✅ {nombre} cargado en {time.perf_counter() - t0:.2f}s", flush=True)
         return mdl
 
-    modelo_lluvia       = carga("modelo_lluvia")
-    modelo_consumo      = carga("modelo_consumo")
-    modelo_clasificacion= carga("modelo_clasificacion")
+    modelo_lluvia        = carga("modelo_lluvia")
+    modelo_consumo       = carga("modelo_consumo")
+    modelo_clasificacion = carga("modelo_clasificacion")
 
     try:
         print("⏳ Cargando columnas_esperadas …", flush=True)
@@ -63,8 +62,8 @@ def get_models():
         raise
 
     return {
-        "lluvia": modelo_lluvia,
-        "consumo": modelo_consumo,
+        "lluvia":       modelo_lluvia,
+        "consumo":      modelo_consumo,
         "clasificacion": modelo_clasificacion,
-        "columnas": columnas_esperadas,
+        "columnas":     columnas_esperadas,
     }

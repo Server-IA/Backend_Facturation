@@ -19,11 +19,14 @@ class Invoice(Base):
     lot_id = Column(Integer, nullable=True)
     user_id = Column(Integer, nullable=True)
     status = Column(String(20), default="pendiente")
+    pdf_url = Column(String(500), nullable=True)
+    xml_url = Column(String(500), nullable=True)
+
 
     # Nuevos campos para Factus
     factus_number = Column(String(50), nullable=True)         # Ej. SETP990012947
     cufe = Column(String(128), nullable=True)
-    public_url = Column(String(255), nullable=True)           # URL pública de la factura
+    public_url = Column(String(500), nullable=True)           # URL pública de la factura
     qr_url = Column(Text, nullable=True)                      # Imagen en base64 o URL del código QR
     dian_status = Column(String(50), nullable=True)           # Estado DIAN: aceptada, rechazada...
     zip_sent_at = Column(DateTime, nullable=True)             # Fecha de envío del ZIP al cliente

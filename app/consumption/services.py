@@ -1,13 +1,13 @@
-# app/consumption/services.py
-
-from datetime import date
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, aliased
-from app.facturation.models    import Request, Lot, PropertyLot, Property, PaymentInterval , ConsumptionMeasurement
-from app.facturation.models    import User
-from app.payu.models           import Invoice
-from app.facturation.services                     import MLService  # asumiendo tu servicio de IA
+from datetime import date
+
+from app.facturation.models import PaymentInterval, ConsumptionMeasurement, PropertyUser , Lot, Request, PropertyLot, Property, TypeCrop
+from app.facturation.services import MLService
+from app.facturation.schemas import PredictInput
+from app.utils.geo import get_altitude, get_weather_data
+from app.utils.mapping import crop_to_soil_type
 
 class ConsumptionService:
     def __init__(self, db: Session):
@@ -15,12 +15,7 @@ class ConsumptionService:
         self.ml = MLService(db)
 
     def list_all_consumptions(self):
-        """
-        Lista todas las mediciones de consumo con:
-         - property_id, lot_id, payment_interval, measurement_date, final_volume
-        """
         PI = aliased(PaymentInterval)
-
         rows = (
             self.db.query(
                 PropertyLot.property_id,
@@ -32,12 +27,11 @@ class ConsumptionService:
             .select_from(ConsumptionMeasurement)
             .join(Request, ConsumptionMeasurement.request_id == Request.id)
             .join(Lot, Request.lot_id == Lot.id)
-            .outerjoin(PI, Lot.payment_interval == PI.id)
+            .outerjoin(PI, Lot.payment_interval_id == PI.id)
             .join(PropertyLot, PropertyLot.lot_id == Lot.id)
             .order_by(ConsumptionMeasurement.created_at.desc())
             .all()
         )
-
         return [
             {
                 "property_id":      prop,
@@ -50,43 +44,43 @@ class ConsumptionService:
         ]
 
     def get_monthly_stats(self, year: int, month: int):
-        """
-        Estadísticas para un mes:
-         - registered_avg: promedio mensual registrado
-         - projected_avg:  promedio mensual proyectado por IA
-         - variation_percent: (proj - reg)/reg*100
-        """
-        # 1) Filtrar mediciones del mes
-        qry = self.db.query(ConsumptionMeasurement).filter(
-            func.extract("year", ConsumptionMeasurement.created_at)  == year,
-            func.extract("month",ConsumptionMeasurement.created_at)  == month
+        recs = (
+            self.db.query(ConsumptionMeasurement)
+               .filter(
+                   func.extract("year", ConsumptionMeasurement.created_at) == year,
+                   func.extract("month", ConsumptionMeasurement.created_at) == month
+               )
+               .all()
         )
-        recs = qry.all()
         if not recs:
-            raise HTTPException(status_code=404, detail="No hay consumos registrados para ese mes")
+            raise HTTPException(404, "No hay consumos registrados para ese mes")
 
-        # 2) Promedio registrado
         total_vol = sum(r.final_volume for r in recs)
         registered_avg = total_vol / len(recs)
 
-        # 3) Promedio proyectado: iterar y usar MLService con datos reales de Request
         proj_vals = []
         for m in recs:
             req = self.db.get(Request, m.request_id)
-            payload = {
-                "Temperatura":    req.Temperatura,
-                "Humedad":        req.Humedad,
-                "Altitud":        req.Altitud,
-                "AreaCultivo":    req.AreaCultivo,
-                "TipoCultivo":    req.TipoCultivo,
-                "TipoTierra":     req.TipoTierra,
-                "lot_id":         req.lot_id
-            }
-            res = self.ml.predict_consumption(payload)
-            proj_vals.append(res["consumo_ajustado"])
-        projected_avg = sum(proj_vals) / len(proj_vals)
+            lot = self.db.get(Lot, req.lot_id)
+            # Obtener type_crop guardando None
+            tc = self.db.get(TypeCrop, lot.type_crop_id)
+            crop_name = tc.name if tc else None
+            soil = crop_to_soil_type(crop_name or "")
+            alt = get_altitude(lot.latitude, lot.longitude)
+            weather = get_weather_data(lot.latitude, lot.longitude)
+            inp = PredictInput(
+                Temperatura=weather["temp"],
+                Humedad=weather["humidity"],
+                Altitud=alt,
+                AreaCultivo=lot.extension,
+                TipoCultivo=crop_name or "",  # default empty
+                TipoTierra=soil,
+                lot_id=lot.id
+            )
+            pred = self.ml.predict_consumption(inp)
+            proj_vals.append(pred.get("consumo_ajustado_final", 0.0))
 
-        # 4) Variación esperada
+        projected_avg = sum(proj_vals) / len(proj_vals)
         variation = round((projected_avg - registered_avg) / (registered_avg or 1) * 100, 2)
 
         return {
@@ -96,17 +90,10 @@ class ConsumptionService:
         }
 
     def get_consumption_detail(self, measurement_id: int):
-        """
-        Detalle de una medición de consumo:
-         - measurement_id, property_id, property_name, lot_id, lot_name
-         - registered_avg, projected_avg, variation_percent
-         - records: lista de todas las mediciones de ese request
-        """
         rec = self.db.get(ConsumptionMeasurement, measurement_id)
         if not rec:
-            raise HTTPException(status_code=404, detail="Medición no encontrada")
+            raise HTTPException(404, "Medición no encontrada")
 
-        # buscar request, lote y predio
         req = self.db.get(Request, rec.request_id)
         lot = self.db.get(Lot, req.lot_id)
         prop_id = (
@@ -116,36 +103,42 @@ class ConsumptionService:
         )
         prop = self.db.get(Property, prop_id)
 
-        # todas las mediciones de este request
-        recs = self.db.query(ConsumptionMeasurement).filter(
-            ConsumptionMeasurement.request_id == rec.request_id
-        ).order_by(ConsumptionMeasurement.created_at).all()
+        recs = (
+            self.db.query(ConsumptionMeasurement)
+               .filter(ConsumptionMeasurement.request_id == rec.request_id)
+               .order_by(ConsumptionMeasurement.created_at)
+               .all()
+        )
 
-        # cálculo de promedios
         vols = [r.final_volume for r in recs]
         registered_avg = sum(vols) / len(vols) if vols else 0.0
 
         proj_vals = []
-        for r in recs:
-            payload = {
-                "Temperatura": 0.0,
-                "Humedad":     0.0,
-                "Altitud":     0.0,
-                "AreaCultivo": 0.0,
-                "TipoCultivo": "A",
-                "TipoTierra":  "arenosa",
-                "lot_id":      req.lot_id
-            }
-            proj_vals.append(self.ml.predict_consumption(payload)["consumo_ajustado"])
+        for _ in recs:
+            tc = self.db.get(TypeCrop, lot.type_crop_id)
+            crop_name = tc.name if tc else None
+            soil = crop_to_soil_type(crop_name or "")
+            alt = get_altitude(lot.latitude, lot.longitude)
+            weather = get_weather_data(lot.latitude, lot.longitude)
+            inp = PredictInput(
+                Temperatura=weather["temp"],
+                Humedad=weather["humidity"],
+                Altitud=alt,
+                AreaCultivo=lot.extension,
+                TipoCultivo=crop_name or "",  
+                TipoTierra=soil,
+                lot_id=lot.id
+            )
+            pred = self.ml.predict_consumption(inp)
+            proj_vals.append(pred.get("consumo_ajustado_final", 0.0))
+
         projected_avg = sum(proj_vals) / len(proj_vals) if proj_vals else 0.0
         variation = round((projected_avg - registered_avg) / (registered_avg or 1) * 100, 2)
 
-        # registros detallados
         records = [
             {
                 "property_id":      prop.id,
                 "lot_id":           lot.id,
-                "payment_interval": lot.payment_interval,  # si lo necesitas
                 "measurement_date": r.created_at,
                 "final_volume":     r.final_volume
             }
@@ -163,3 +156,64 @@ class ConsumptionService:
             "variation_percent": variation,
             "records":           records
         }
+
+    def get_properties_total_consumption(self, user_id: int):
+        props = (
+            self.db.query(Property)
+               .join(PropertyUser, Property.id == PropertyUser.property_id)
+               .filter(PropertyUser.user_id == user_id)
+               .all()
+        )
+        result = []
+        for p in props:
+            lot_ids = [l.id for l in p.lots]
+            recs = (
+                self.db.query(ConsumptionMeasurement)
+                   .join(Request, Request.id == ConsumptionMeasurement.request_id)
+                   .filter(Request.lot_id.in_(lot_ids))
+                   .all()
+            )
+            if not recs:
+                continue
+            total = sum(r.final_volume for r in recs)
+            latest = max(r.created_at for r in recs)
+            result.append({
+                "property_id":            p.id,
+                "property_name":          p.name,
+                "extension":              p.extension,
+                "measurement_date":       latest,
+                "registered_consumption": total
+            })
+        return {"success": True, "data": result}
+
+    def predict_district_consumption(self):
+        lots = self.db.query(Lot).all()
+        total_pred, details = 0.0, []
+        for lot in lots:
+            tc = self.db.get(TypeCrop, lot.type_crop_id)
+            crop_name = tc.name if tc else None
+            soil = crop_to_soil_type(crop_name or "")
+            alt = get_altitude(lot.latitude, lot.longitude)
+            weather = get_weather_data(lot.latitude, lot.longitude)
+            inp = PredictInput(
+                Temperatura=weather["temp"],
+                Humedad=weather["humidity"],
+                Altitud=alt,
+                AreaCultivo=lot.extension,
+                TipoCultivo=crop_name or "",
+                TipoTierra=soil,
+                lot_id=lot.id
+            )
+            try:
+                pred = self.ml.predict_consumption(inp)
+                adj = pred.get("consumo_ajustado_final", 0.0)
+                total_pred += adj
+                details.append({
+                    "lot_id": lot.id,
+                    "lot_name": lot.name,
+                    "predicted_consumption": adj
+                })
+            except Exception as e:
+                raise HTTPException(500, f"Error IA lote {lot.id}: {e}")
+
+        return {"success": True, "data": {"details": details, "total_predicted_consumption": round(total_pred, 2)}}

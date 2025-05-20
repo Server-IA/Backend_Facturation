@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.facturation.services import FacturationService , MLService , InvoiceService
-from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput , ConceptTypeOut , ScopeTypeOut , ConceptResponse
+from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput , ConceptTypeOut , ScopeTypeOut ,ConsumptionPredictionOut, PredictByLot, ConceptResponse
 
 
 router = APIRouter(prefix="/facturations", tags=["Facturations"])
@@ -81,20 +81,11 @@ def disable_concept(concept_id: int, db: Session = Depends(get_db)):
 
 @router.post(
     "/predict-consumption",
-    summary="Predecir consumo de agua",
-    response_model=Dict[str, Any],
-    tags=["Machine Learning"]
+    response_model=ConsumptionPredictionOut,
+    summary="Predecir consumo de agua por lote"
 )
-def predict_consumption(
-    payload: PredictInput = Body(...),
-    db:      Session      = Depends(get_db),
-):
-    """
-    Devuelve:
-      - predicted_consumption: estimación (m³)
-      - historical_avg_consumption: promedio histórico para ese lote (si se provee lot_id)
-    """
-    return MLService(db).predict_consumption(payload)
+def predict_consumption(payload: PredictByLot, db: Session = Depends(get_db)):
+    return FacturationService(db).predict_consumption_by_lot(payload.lot_id)
 
 @router.get("/detail/{invoice_id}")
 def get_invoice_detail(invoice_id: int, db: Session = Depends(get_db)):
