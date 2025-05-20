@@ -205,7 +205,7 @@ class BillingService:
                 "nombre":         concept.nombre,
                 "descripcion":    concept.descripcion,
                 "valor_unitario": float(concept.valor),
-                "total_concepto": float(total_volume * concept.valor)
+                "total_concepto": float(total_volume) * float(concept.valor)
             })
 
         return {
@@ -214,6 +214,7 @@ class BillingService:
                 "reference_code":     invoice.reference_code,
                 "issuance_date":      invoice.issuance_date,
                 "expiration_date":    invoice.expiration_date,
+                "pdf_url":            invoice.pdf_url,
                 **period,
                 "total_amount":       float(invoice.total_amount),
                 "client_name":        getattr(invoice, "client_name", None),
