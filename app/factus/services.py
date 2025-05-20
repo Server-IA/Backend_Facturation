@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from fastapi.responses import JSONResponse
 import httpx
 import base64
@@ -13,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.payu.models import Invoice, Payment
+from app.firebase_config import storage
 
 class FactusService:
     def __init__(self, db: Session):
@@ -196,11 +198,11 @@ class FactusService:
             file_name = respuesta["data"]["file_name"]
 
             # Guardar XML
-            ruta_xml = self.guardar_xml(xml_b64, file_name)
+            ruta_xml = self.guardar_xml_en_firebase(xml_b64, file_name)
 
             respuesta = response_pdf.json()
             file_name = respuesta["data"]["file_name"]
-            ruta_pdf = self.guardar_pdf(response_pdf.content, file_name)
+            ruta_pdf = self.guardar_pdf_en_firebase(response_pdf.content, file_name)
 
             # Guardar en la base de datos
             invoice.pdf_url = ruta_xml
@@ -340,5 +342,49 @@ class FactusService:
             smtp.send_message(msg)
 
         print("ZIP email sent successfully.")
+
+    @staticmethod
+    def guardar_pdf_en_firebase(response_pdf_content: bytes, nombre_archivo: str, directory: str = "facturas") -> str:
+        # Decodificar el contenido JSON
+        response_data = json.loads(response_pdf_content.decode("utf-8"))
+        pdf_b64 = response_data["data"]["pdf_base_64_encoded"]
+        pdf_bytes = base64.b64decode(pdf_b64)
+
+        # Generar nombre único
+        unique_filename = f"{nombre_archivo}_{uuid.uuid4()}.pdf"
+
+        # Crear el blob dentro del bucket
+        bucket = storage.bucket()
+        blob = bucket.blob(f"{directory}/{unique_filename}")
+
+        # Subir a Firebase Storage
+        blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+
+        # Hacerlo público
+        blob.make_public()
+
+        # Retornar URL pública
+        return blob.public_url
+    
+    @staticmethod
+    def guardar_xml_en_firebase(xml_base_64: str, nombre_archivo: str, directory: str = "facturas") -> str:
+        # Decodificar el XML desde base64
+        xml_bytes = base64.b64decode(xml_base_64)
+
+        # Generar nombre único
+        unique_filename = f"{nombre_archivo}_{uuid.uuid4()}.xml"
+
+        # Crear el blob en Firebase Storage
+        bucket = storage.bucket()
+        blob = bucket.blob(f"{directory}/{unique_filename}")
+
+        # Subir el contenido al bucket
+        blob.upload_from_string(xml_bytes, content_type="application/xml")
+
+        # Hacer el archivo público
+        blob.make_public()
+
+        # Retornar la URL pública
+        return blob.public_url
 
 
