@@ -121,6 +121,7 @@ class BillingService:
                 Invoice.total_amount.label("amount_due"),
                 Invoice.status.label("invoice_status"),
                 Invoice.dian_status.label("dian_status"),
+                Invoice.pdf_url.label("pdf_url")
             )
             .select_from(Invoice)
             .outerjoin(Lot, Invoice.lot_id == Lot.id)
