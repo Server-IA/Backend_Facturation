@@ -102,6 +102,8 @@ class PayUService:
             if invoice.status == 'pagada':
                 return JSONResponse(status_code=400, content={"success": False, "data": {"tittle" : "La factura ya fue pagada"}})
 
+            if invoice.total_amount <= 0:
+                return JSONResponse(status_code=400, content={"success": False, "data": {"title" : "La factura debe tener un monto mayor a $0 para generar la transaccion"}})
 
             users = self.get_user_info_by_lot(invoice.lot_id)
 
@@ -189,7 +191,7 @@ class PayUService:
                     "type": "AUTHORIZATION_AND_CAPTURE",
                     "paymentMethod": "PSE",
                     "paymentCountry": "CO",
-                    "deviceSessionId": payment_data["deviceSessionId"],
+                    "deviceSessionId": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
                     "ipAddress": payment_data["ipAddress"],
                     "cookie": payment_data["cookie"],
                     "userAgent": payment_data["userAgent"]
