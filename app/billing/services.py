@@ -157,6 +157,7 @@ class BillingService:
             payment_data = {
                 "payment_method":     payment.payment_method,
                 "reference_code":     payment.reference_code,
+                "transaction_id":     payment.transaction_id, 
                 "transaction_amount": float(payment.amount),
                 "payment_date":       payment.paid_at,
                 "payment_status_id":  payment.status,   # repetimos el texto
@@ -348,10 +349,12 @@ class BillingService:
 
         q = (
             self.db.query(
+                Payment.id.label("id"),
                 Invoice.reference_code.label("invoice_number"),
                 U.document_number.label("payer_document"),
                 Payment.paid_at.label("payment_date"),
                 Payment.reference_code.label("reference_code"),
+                Payment.transaction_id.label("transaction_id"),
                 Payment.payment_method.label("payment_method"),
                 Payment.amount.label("paid_amount"),
                 Payment.status.label("payment_status_id"),   # repetimos el código
@@ -377,25 +380,50 @@ class BillingService:
     def get_payment_detail(self, payment_id: int):
         """
         Detalle de un pago:
-         - payment_method
-         - payer_name
-         - transaction_amount
-         - payment_status_id   (igual al texto del status)
-         - payment_status_name (texto del status)
-         - payment_date
-         - reference_code
-         - payer_email
+        - Datos del pago (método, fecha, monto, estado, referencia)
+        - Datos del pagador (documento, correo)
+        - Datos de la factura (ID, código)
+        - Datos del lote y predio (ID y nombre)
         """
         pago: Payment = self.db.query(Payment).filter(Payment.id == payment_id).first()
         if not pago:
             raise HTTPException(status_code=404, detail="Pago no encontrado")
-        
-        payment_status_map = {
-            4: "Aprobado",
-            6: "Rechazado"
-        }
 
-        # Nombre del pagador vía invoice.user_id
+        invoice = self.db.query(Invoice).get(pago.invoice_id) if pago.invoice_id else None
+        user = self.db.query(User).get(invoice.user_id) if invoice and invoice.user_id else None
+
+        lot_id = invoice.lot_id if invoice else None
+        property_id = None
+        lot_name = None
+        property_name = None
+
+        if lot_id:
+            lot = self.db.query(Lot).get(lot_id)
+            lot_name = lot.name if lot else None
+
+            property_lot = (
+                self.db.query(PropertyLot)
+                .filter(PropertyLot.lot_id == lot_id)
+                .first()
+            )
+            if property_lot:
+                property_id = property_lot.property_id
+                prop = self.db.query(Property).get(property_id)
+                property_name = prop.name if prop else None
+
+        # Documento del pagador
+        payer_document = user.document_number if user else None
+        if not payer_document and property_id:
+            pu = (
+                self.db.query(PropertyUser)
+                .filter(PropertyUser.property_id == property_id)
+                .first()
+            )
+            if pu:
+                fallback_user = self.db.query(User).get(pu.user_id)
+                payer_document = fallback_user.document_number if fallback_user else None
+
+         # Nombre del pagador vía invoice.user_id
         payer_name = None
         if pago.invoice_id:
             inv = self.db.query(Invoice).get(pago.invoice_id)
@@ -403,19 +431,38 @@ class BillingService:
                 usr = self.db.query(User).get(inv.user_id)
                 payer_name = f"{usr.name} {usr.first_last_name} {usr.second_last_name}" if usr else None
 
-        return {
-            "payment_method":       pago.payment_method,
-            "payer_name":           payer_name,
-            "transaction_amount":   float(pago.amount),
-            "payment_status_id":    pago.status,  # texto como “id”
-            "payment_status_name":  payment_status_map.get(int(pago.status), "Desconocido"),  # mismo texto como “nombre”
-            "payment_date":         pago.paid_at,
-            "reference_code":       pago.reference_code,
-            "payer_email":          pago.payer_email,
+        payment_status_map = {
+            4: "Aprobado",
+            6: "Rechazado"
         }
-    
-    # --- Paginación y listados (sin filtros; frontend los aplica) ------------
 
+        return {
+            "payment_method":      pago.payment_method,
+            "transaction_id":      pago.transaction_id,
+            "transaction_amount":  float(pago.amount),
+            "payment_status_id":   pago.status,
+            "payment_status_name": payment_status_map.get(int(pago.status), "Desconocido"),
+            "payment_date":        pago.paid_at,
+            "reference_code":      pago.reference_code,
+            "payer_email":         pago.payer_email,
+
+            # Datos de la factura
+            "invoice_id":          invoice.id if invoice else None,
+            "invoice_code":        invoice.reference_code if invoice else None,
+
+            # Datos de lote y predio
+            "lot_id":              lot_id,
+            "lot_name":            lot_name,
+            "property_id":         property_id,
+            "property_name":       property_name,
+
+            # Documento del pagador
+            "payer_document":      payer_document,
+            "payer_name":          payer_name,
+        }
+
+
+    # --- Paginación y listados (sin filtros; frontend los aplica) ------------
     def list_invoices(self, offset: int = 0, limit: int = 100):
         """
         Devuelve facturas en orden descendente de fecha, con paginación.
