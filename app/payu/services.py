@@ -214,7 +214,7 @@ class PayUService:
             self.db.commit()
 
             if data["transactionResponse"]["state"] == 'DECLINED':
-                return JSONResponse(status_code=200, content={"success": True, "data": data["transactionResponse"]["paymentNetworkResponseErrorMessage"]})
+                return JSONResponse(status_code=400, content={"success": True, "data": data["transactionResponse"]["paymentNetworkResponseErrorMessage"]})
             else:
                 return JSONResponse(status_code=200, content={"success": True, "data": data["transactionResponse"]["extraParameters"]["BANK_URL"]})
 

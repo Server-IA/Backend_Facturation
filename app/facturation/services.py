@@ -592,7 +592,7 @@ class InvoiceService:
     @staticmethod
     def generate_reference_code(db: Session) -> str:
         today = datetime.utcnow().strftime("%Y%m%d")  # ej: 20250513
-        count = db.query(func.count(Invoice.id)).scalar() + 1  # conteo total actual
+        count = db.query(Invoice.id).order_by(Invoice.id.desc()).limit(1).scalar() + 1  # conteo total actual
         return f"DISR-{today}-{count:04d}"  # ej: DISR-20250513-0007
     
     def create_invoice(self, payment_data: dict):
@@ -652,7 +652,7 @@ class InvoiceService:
             invoice = Invoice(
                 reference_code=reference_code,
                 user_id=user_lots["user_id"],
-                client_name=user_lots['user_name'],
+                client_name=user_lots['user_name'].title(),
                 client_email=user_lots['user_email'],
                 billing_start_date=billing_start_date,
                 billing_end_date=billing_end_date,

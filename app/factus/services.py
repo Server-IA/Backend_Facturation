@@ -220,16 +220,16 @@ class FactusService:
                         <h2 style="color: #218c74;">DisRiego</h2>
                     </div>
 
-                    <p>Estimado(a) <strong>{invoice.client_name}</strong>,</p>
+                    <p>Estimado(a) <strong>{invoice.client_name.title() if invoice.client_name else ''}</strong>,</p>
                     <p>Ha recibido una factura o nota electrónica. Adjunto a este correo encontrará el documento.</p>
 
                     <h4 style="margin-top: 30px;">Resumen del documento:</h4>
                     <p><strong>Emisor:</strong> Disriego</p>
                     <p><strong>Tipo de documento:</strong> Factura de venta</p>
                     <p><strong>Número de documento:</strong> {invoice.factus_number}</p>
-                    <p><strong>Fecha de emisión:</strong> {invoice.issuance_date}</p>
-                    <p><strong>Fecha de vencimiento:</strong> {invoice.expiration_date}</p>
-                    <p><strong>Valor a pagar:</strong> ${invoice.total_amount}</p>
+                    <p><strong>Fecha de emisión:</strong> {self.formato_fecha(invoice.issuance_date)}</p>
+                    <p><strong>Fecha de vencimiento:</strong> {self.formato_fecha(invoice.expiration_date)}</p>
+                    <p><strong>Valor a pagar:</strong> ${self.formato_pesos(invoice.total_amount)}</p>
 
                     <p style="margin-top: 30px;">Saludos,<br>
                     El equipo de <strong>DisRiego</strong></p>
@@ -243,7 +243,6 @@ class FactusService:
                 </body>
                 </html>
                 """
-
 
             self.send_invoice_zip_by_email(
                 invoice.client_email,
@@ -261,6 +260,14 @@ class FactusService:
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    @staticmethod
+    def formato_fecha(fecha):
+        return fecha.strftime("%d/%m/%Y") if fecha else ""
+
+    @staticmethod
+    def formato_pesos(valor):
+        return f"${valor:,.0f}".replace(",", ".")
 
     @staticmethod
     def guardar_xml(xml_base_64: str, nombre_archivo: str, carpeta: str = "uploads/facturas"):
@@ -287,31 +294,43 @@ class FactusService:
         return ruta
     
     def enviar_factura_por_correo(self, destinatario: str, subject: str, body: str, pdf_path: str, xml_path: str):
-        remitente = os.getenv("SMTP_EMAIL")
-        clave = os.getenv("SMTP_PASSWORD")  # Usa App Password si es Gmail
+        try:
+            remitente = os.getenv("SMTP_EMAIL")
+            clave = os.getenv("SMTP_PASSWORD")  # Usa App Password si es Gmail
 
-        msg = EmailMessage()
-        msg["From"] = remitente
-        msg["To"] = destinatario
-        msg["Subject"] = subject
-        # msg.set_content(body)
-        msg.set_content("Este correo contiene una factura electrónica adjunta.")
-        msg.add_alternative(body, subtype="html")
+            msg = EmailMessage()
+            msg["From"] = remitente
+            msg["To"] = destinatario
+            msg["Subject"] = subject
+            # msg.set_content(body)
+            msg.set_content("Este correo contiene una factura electrónica adjunta.")
+            msg.add_alternative(body, subtype="html")
 
-        # Adjuntar PDF
-        with open(pdf_path, "rb") as f:
-            msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=os.path.basename(pdf_path))
+            # Adjuntar PDF
+            with open(pdf_path, "rb") as f:
+                msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=os.path.basename(pdf_path))
 
-        # Adjuntar XML
-        with open(xml_path, "rb") as f:
-            msg.add_attachment(f.read(), maintype="application", subtype="xml", filename=os.path.basename(xml_path))
+            # Adjuntar XML
+            with open(xml_path, "rb") as f:
+                msg.add_attachment(f.read(), maintype="application", subtype="xml", filename=os.path.basename(xml_path))
 
-        # Enviar correo
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(remitente, clave)
-            smtp.send_message(msg)
+            # Enviar correo con gmail
+            # with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            #     smtp.login(remitente, clave)
+            #     smtp.send_message(msg)
 
-        print("Correo enviado correctamente.")
+            # Establecer conexión con SMTP de Outlook
+            with smtplib.SMTP("smtp.office365.com", 587) as smtp:
+                smtp.ehlo()
+                smtp.starttls()  # Iniciar TLS
+                smtp.login(remitente, clave)
+                smtp.send_message(msg)
+                print("✅ Correo enviado exitosamente desde Outlook.")
+
+        except smtplib.SMTPAuthenticationError:
+            print("❌ Error de autenticación: verifica el correo y la contraseña (puede requerir contraseña de aplicación).")
+        except Exception as e:
+            print(f"❌ Error al enviar el correo: {str(e)}")
     
     @staticmethod
     def extract_blob_path_from_url(url: str) -> str:
@@ -327,46 +346,57 @@ class FactusService:
         return path[facturas_index + 1:]  # quitamos el slash inicial
 
     def send_invoice_zip_by_email(self, recipient: str, subject: str, html_body: str, pdf_url: str, xml_url: str):
-        sender = os.getenv("SMTP_EMAIL")
-        password = os.getenv("SMTP_PASSWORD")
+        try:
+            sender = os.getenv("SMTP_EMAIL")
+            password = os.getenv("SMTP_PASSWORD")
+            print(password, sender)
 
-        # Preparar el mensaje
-        msg = EmailMessage()
-        msg["From"] = sender
-        msg["To"] = recipient
-        msg["Subject"] = subject
-        msg.set_content("Este correo contiene una factura electrónica adjunta.")
-        msg.add_alternative(html_body, subtype="html")
+            # Preparar el mensaje
+            msg = EmailMessage()
+            msg["From"] = sender
+            msg["To"] = recipient
+            msg["Subject"] = subject
+            msg.set_content("Este correo contiene una factura electrónica adjunta.")
+            msg.add_alternative(html_body, subtype="html")
 
-        # Extraer blob paths reales desde las URLs públicas
-        pdf_blob_path = self.extract_blob_path_from_url(pdf_url)
-        xml_blob_path = self.extract_blob_path_from_url(xml_url)
+            # Extraer blob paths reales desde las URLs públicas
+            pdf_blob_path = self.extract_blob_path_from_url(pdf_url)
+            xml_blob_path = self.extract_blob_path_from_url(xml_url)
 
-        # Descargar archivos desde Firebase
-        bucket = storage.bucket()
-        pdf_blob = bucket.blob(pdf_blob_path)
-        xml_blob = bucket.blob(xml_blob_path)
+            # Descargar archivos desde Firebase
+            bucket = storage.bucket()
+            pdf_blob = bucket.blob(pdf_blob_path)
+            xml_blob = bucket.blob(xml_blob_path)
 
-        pdf_bytes = pdf_blob.download_as_bytes()
-        xml_bytes = xml_blob.download_as_bytes()
+            pdf_bytes = pdf_blob.download_as_bytes()
+            xml_bytes = xml_blob.download_as_bytes()
 
-        # Crear archivo ZIP en memoria
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr(os.path.basename(pdf_blob_path), pdf_bytes)
-            zip_file.writestr(os.path.basename(xml_blob_path), xml_bytes)
-        zip_buffer.seek(0)
+            # Crear archivo ZIP en memoria
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+                zip_file.writestr(os.path.basename(pdf_blob_path), pdf_bytes)
+                zip_file.writestr(os.path.basename(xml_blob_path), xml_bytes)
+            zip_buffer.seek(0)
 
-        # Adjuntar ZIP al mensaje
-        zip_filename = f"{os.path.splitext(os.path.basename(pdf_blob_path))[0]}.zip"
-        msg.add_attachment(zip_buffer.read(), maintype="application", subtype="zip", filename=zip_filename)
+            # Adjuntar ZIP al mensaje
+            zip_filename = f"{os.path.splitext(os.path.basename(pdf_blob_path))[0]}.zip"
+            msg.add_attachment(zip_buffer.read(), maintype="application", subtype="zip", filename=zip_filename)
 
-        # Enviar el correo
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(sender, password)
-            smtp.send_message(msg)
+            # Enviar el correo
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+                smtp.login(sender, password)
+                smtp.send_message(msg)
 
-        print("ZIP email sent successfully.")
+            # with smtplib.SMTP("smtp.office365.com", 587) as smtp:
+            #     smtp.starttls()  # Iniciar TLS
+            #     smtp.login(sender, password)
+            #     smtp.send_message(msg)
+            #     print("Correo enviado exitosamente desde Outlook.")
+
+        except smtplib.SMTPAuthenticationError:
+            print("Error de autenticación: verifica el correo y la contraseña (puede requerir contraseña de aplicación).")
+        except Exception as e:
+            print(f"Error al enviar el correo: {str(e)}")
 
     @staticmethod
     def guardar_pdf_en_firebase(response_pdf_content: bytes, unique_filename: str, directory: str = "facturas") -> str:
