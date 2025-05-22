@@ -42,6 +42,7 @@ class ProjectedMonthlyAvg(BaseModel):
     projected_monthly_avg: Dict[int, float]  # mes (1-12) -> promedio proyectado
 
 class UserLotConsumptionRecord(BaseModel):
+    measurement_id: int
     property_name: str
     lot_id: int
     lot_name: str

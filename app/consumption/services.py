@@ -20,6 +20,7 @@ class ConsumptionService:
 
         rows = (
             self.db.query(
+                ConsumptionMeasurement.id.label("measurement_id"),
                 PropertyLot.property_id,
                 Lot.id.label("lot_id"),
                 PI.name.label("payment_interval"),
@@ -40,6 +41,7 @@ class ConsumptionService:
 
         return [
             {
+                "measurement_id":   meas_id,
                 "property_id":      prop,
                 "lot_id":           lot,
                 "payment_interval": interval,
@@ -47,7 +49,7 @@ class ConsumptionService:
                 "final_volume":     float(vol),
                 "document_number":  doc
             }
-            for prop, lot, interval, m_date, vol, doc in rows
+            for meas_id, prop, lot, interval, m_date, vol, doc in rows
         ]
     
 
@@ -219,6 +221,7 @@ class ConsumptionService:
 
         rows = (
             self.db.query(
+                ConsumptionMeasurement.id.label("measurement_id"),
                 Property.name.label("property_name"),
                 Lot.name.label("lot_name"),
                 Lot.id.label("lot_id"),
@@ -240,6 +243,7 @@ class ConsumptionService:
         
         return [
             {
+                "measurement_id":   meas_id,
                 "property_name":   prop_name,
                 "lot_name":        lot_name,
                 "lot_id":           lot_id,
@@ -247,7 +251,7 @@ class ConsumptionService:
                 "measurement_date": m_date,
                 "final_volume":     float(vol)
             }
-            for prop_name, lot_name, lot_id, interval, m_date, vol in rows
+            for meas_id, prop_name, lot_name, lot_id, interval, m_date, vol in rows
         ]
     
     def get_user_monthly_projected_by_year(self, user_id: int, year: int) -> dict:
@@ -389,6 +393,7 @@ class ConsumptionService:
             "variation_percent": variation,
             "records":           records
         }
+    
 
     def get_properties_total_consumption(self, user_id: int):
         props = (
