@@ -27,3 +27,13 @@ class ConsumptionDetail(BaseModel):
     projected_avg:     float
     variation_percent: float
     records:           List[ConsumptionRecord]
+
+
+class LotConsumption(BaseModel):
+    property_id: int
+    property_name: str
+    lot_id: int
+    lot_name: str
+    total_consumption: float
+    billing_start_date: datetime | None
+    billing_end_date: datetime | None

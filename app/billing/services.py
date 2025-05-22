@@ -157,11 +157,11 @@ class BillingService:
             payment_data = {
                 "payment_method":     payment.payment_method,
                 "reference_code":     payment.reference_code,
-                "transaction_id":     payment.transaction_id, 
+                "transaction_id":     payment.transaction_id,
                 "transaction_amount": float(payment.amount),
                 "payment_date":       payment.paid_at,
-                "payment_status_id":  payment.status,   # repetimos el texto
-                "payment_status_name":payment.status
+                "payment_status_id":  payment.status,
+                "payment_status_name": payment.status,
             }
 
         # Documento y property_id
@@ -174,8 +174,8 @@ class BillingService:
         if invoice.lot_id is not None:
             property_id = (
                 self.db.query(PropertyLot.property_id)
-                       .filter(PropertyLot.lot_id == invoice.lot_id)
-                       .scalar()
+                    .filter(PropertyLot.lot_id == invoice.lot_id)
+                    .scalar()
             )
             if not client_document and property_id:
                 pu = self.db.query(PropertyUser).filter(
@@ -185,6 +185,17 @@ class BillingService:
                     usr = self.db.get(User, pu.user_id)
                     client_document = usr.document_number if usr else None
 
+        # Nombres de lote y predio
+        lot_name = None
+        if invoice.lot_id is not None:
+            lote = self.db.get(Lot, invoice.lot_id)
+            lot_name = lote.name if lote else None
+
+        property_name = None
+        if property_id is not None:
+            predio = self.db.get(Property, property_id)
+            property_name = predio.name if predio else None
+
         # Periodo facturado
         period = {
             "start_date":      getattr(invoice, "billing_start_date", None),
@@ -193,39 +204,45 @@ class BillingService:
         }
 
         # Conceptos
-        total_volume = self.db.query(
-            func.sum(ConsumptionMeasurement.final_volume)
-        ).filter(ConsumptionMeasurement.invoice_id == invoice_id).scalar() or 0
+        total_volume = (
+            self.db.query(func.sum(ConsumptionMeasurement.final_volume))
+                .filter(ConsumptionMeasurement.invoice_id == invoice_id)
+                .scalar()
+        ) or 0
 
         conceptos = []
-        for concept, ic in self.db.query(Concept, InvoiceConcept).join(
-            InvoiceConcept, Concept.id == InvoiceConcept.concept_id
-        ).filter(InvoiceConcept.invoice_id == invoice_id):
+        for concept, ic in (
+            self.db.query(Concept, InvoiceConcept)
+                .join(InvoiceConcept, Concept.id == InvoiceConcept.concept_id)
+                .filter(InvoiceConcept.invoice_id == invoice_id)
+        ):
             conceptos.append({
                 "concept_id":     concept.id,
                 "nombre":         concept.nombre,
                 "descripcion":    concept.descripcion,
                 "valor_unitario": float(concept.valor),
-                "total_concepto": float(total_volume) * float(concept.valor)
+                "total_concepto": round(float(total_volume) * float(concept.valor), 2)
             })
 
         return {
             "invoice": {
-                "invoice_id":         invoice.id,
-                "reference_code":     invoice.reference_code,
-                "issuance_date":      invoice.issuance_date,
-                "expiration_date":    invoice.expiration_date,
-                "pdf_url":            invoice.pdf_url,
+                "invoice_id":          invoice.id,
+                "reference_code":      invoice.reference_code,
+                "issuance_date":       invoice.issuance_date,
+                "expiration_date":     invoice.expiration_date,
+                "pdf_url":             invoice.pdf_url,
                 **period,
-                "total_amount":       float(invoice.total_amount),
-                "client_name":        getattr(invoice, "client_name", None),
-                "client_email":       getattr(invoice, "client_email", None),
-                "client_document":    client_document,
-                "property_id":        property_id,
-                "lot_id":             invoice.lot_id,    
-                "invoice_status_name":invoice.status,   
-                "dian_status_id":     invoice.dian_status,
-                "dian_status_name":   invoice.dian_status
+                "total_amount":        float(invoice.total_amount),
+                "client_name":         getattr(invoice, "client_name", None),
+                "client_email":        getattr(invoice, "client_email", None),
+                "client_document":     client_document,
+                "property_id":         property_id,
+                "property_name":       property_name,
+                "lot_id":              invoice.lot_id,
+                "lot_name":            lot_name,
+                "invoice_status_name": invoice.status,
+                "dian_status_id":      invoice.dian_status,
+                "dian_status_name":    invoice.dian_status
             },
             "payment":  payment_data,
             "concepts": conceptos

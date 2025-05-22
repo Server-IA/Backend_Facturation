@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
-from app.facturation.models import Concept, Lot , ConsumptionMeasurement, Request , InvoiceConcept , ConceptType, ScopeType
+from app.facturation.models import Concept, Lot , PropertyLot, Property,PropertyUser,ConsumptionMeasurement, Request , InvoiceConcept , ConceptType, ScopeType
 from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
 from app.payu.models import Invoice, Payment
 from app.ml import (
@@ -388,60 +388,178 @@ class InvoiceService:
         self.db = db
 
     def get_invoice_detail(self, invoice_id: int):
-        try:
-            invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
-            if not invoice:
-                raise HTTPException(status_code=404, detail="Factura no encontrada")
-            
-            payment = self.db.query(Payment).filter(Payment.invoice_id == invoice_id).first()
-            data_payment = {}
-            if payment:
-                data_payment = {
-                    "payment_id": payment.id,
-                    "payment_method": payment.payment_method,
-                    "payment_date": payment.paid_at,
-                    "amount": payment.amount,
-                    "reference_code": payment.reference_code,
-                    "transaction_id": payment.transaction_id,
-                    "payer_email": payment.payer_email
-                }
-            
-            lots = self.db.query(Lot).filter(Lot.id == invoice.lot_id).first()
-            if not lots:
-                raise HTTPException(status_code=404, detail="Lote no encontrado")
-            
-            user_lots = self.get_user_info_by_lot(lots.id)
-            
-            response_data = {
-                "invoice": {
-                    "factura_id": invoice.id,
-                    "reference_code": invoice.reference_code,
-                    "issuance_date": invoice.issuance_date,
-                    "expiration_date": invoice.expiration_date,
-                    "invoiced_period": invoice.invoiced_period,
-                    "client_name": invoice.client_name,
-                    "client_email": invoice.client_email,
-                    "total_amount": invoice.total_amount,
-                    "lot_id": invoice.lot_id,
-                    "status": invoice.status,
-                    "factus_number": invoice.factus_number,
-                    "cufe": invoice.cufe,
-                    "public_url": invoice.public_url,
-                    "qr_url": invoice.qr_url,
-                    "dian_status": invoice.dian_status,
-                    "zip_sent_at": invoice.zip_sent_at,
-                },
-                "payment": data_payment,
-                "user_lots" : user_lots              
+        # 1) Obtener factura
+        invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+        # 2) Pago asociado
+        payment = self.db.query(Payment).filter(Payment.invoice_id == invoice_id).first()
+        payment_data = None
+        if payment:
+            payment_data = {
+                "payment_method":      payment.payment_method,
+                "reference_code":      payment.reference_code,
+                "transaction_id":      payment.transaction_id,
+                "transaction_amount":  float(payment.amount),
+                "payment_date":        payment.paid_at,
+                "payment_status_id":   payment.status,
+                "payment_status_name": payment.status
             }
 
-            return JSONResponse(status_code=200, content={"success": True, "data": jsonable_encoder(response_data)})
+        # 3) Documento del cliente
+        client_document = None
+        if invoice.user_id:
+            usr = self.db.get(PropertyUser, invoice.user_id)
+            # Correction: use User model instead of PropertyUser
+            from app.facturation.models import User
+            u = self.db.get(User, invoice.user_id)
+            client_document = u.document_number if u else None
 
-        except HTTPException as he:
-            return JSONResponse(status_code=he.status_code, content={"success": False, "data": {"title": "Validación", "message": he.detail}})
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"success": False, "data": {"title": "Error al obtener factura", "message": str(e)}})
-        
+        # 4) Property id vía lote
+        property_id = None
+        if invoice.lot_id is not None:
+            property_id = (
+                self.db.query(PropertyLot.property_id)
+                       .filter(PropertyLot.lot_id == invoice.lot_id)
+                       .scalar()
+            )
+            if not client_document and property_id:
+                pu = self.db.query(PropertyUser).filter(
+                    PropertyUser.property_id == property_id
+                ).first()
+                if pu:
+                    from app.facturation.models import User
+                    u2 = self.db.get(User, pu.user_id)
+                    client_document = u2.document_number if u2 else None
+
+        # 5) Periodo facturado
+        period = {
+            "start_date":      getattr(invoice, "billing_start_date", None),
+            "end_date":        getattr(invoice, "billing_end_date", None),
+            "invoiced_period": getattr(invoice, "invoiced_period", None),
+        }
+
+        # 6) Total volumen medido
+        total_volume = self.db.query(
+            func.sum(ConsumptionMeasurement.final_volume)
+        ).filter(ConsumptionMeasurement.invoice_id == invoice_id).scalar() or 0
+
+        # 7) Conceptos facturados
+        conceptos = []
+        for concept, ic in self.db.query(Concept, InvoiceConcept).join(
+            InvoiceConcept, Concept.id == InvoiceConcept.concept_id
+        ).filter(InvoiceConcept.invoice_id == invoice_id):
+            conceptos.append({
+                "concept_id":     concept.id,
+                "nombre":         concept.nombre,
+                "descripcion":    concept.descripcion,
+                "valor_unitario": float(concept.valor),
+                "total_concepto": float(total_volume) * float(concept.valor)
+            })
+
+        # 8) Construir respuesta
+        return {
+            "invoice": {
+                "invoice_id":         invoice.id,
+                "reference_code":     invoice.reference_code,
+                "issuance_date":      invoice.issuance_date,
+                "expiration_date":    invoice.expiration_date,
+                "pdf_url":            invoice.pdf_url,
+                **period,
+                "total_amount":       float(invoice.total_amount),
+                "client_name":        getattr(invoice, "client_name", None),
+                "client_email":       getattr(invoice, "client_email", None),
+                "client_document":    client_document,
+                "property_id":        property_id,
+                "lot_id":             invoice.lot_id,
+                "invoice_status_name":invoice.status,
+                "dian_status_id":     invoice.dian_status,
+                "dian_status_name":   invoice.dian_status
+            },
+            "payment":  payment_data,
+            "concepts": conceptos
+        }
+
+    def list_user_invoices(self, user_id: int):
+        from app.facturation.models import User
+        from sqlalchemy.orm import aliased
+        from app.payu.models import Invoice as Inv
+        from app.facturation.models import PaymentInterval
+
+        # 1) Validar usuario
+        if not self.db.query(User).filter(User.id == user_id).first():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        PI = aliased(PaymentInterval)
+
+        rows = (
+            self.db.query(
+                Inv.id.label("invoice_id"),
+                Inv.reference_code,
+                PropertyLot.property_id,
+                Property.name.label("property_name"),
+                Inv.lot_id,
+                Lot.name.label("lot_name"),
+                PI.name.label("payment_interval"),
+                PI.interval_days.label("payment_days"),
+                Inv.invoiced_period,
+                Inv.expiration_date,
+                Inv.issuance_date,
+                Inv.total_amount,
+                Inv.status,
+                Inv.pdf_url,
+                User.document_number.label("document_number")
+            )
+            .join(User, User.id == Inv.user_id)
+            .join(Lot, Inv.lot_id == Lot.id)
+            .outerjoin(PI, Lot.payment_interval_id == PI.id)
+            .join(PropertyLot, PropertyLot.lot_id == Lot.id)
+            .join(Property, Property.id == PropertyLot.property_id)
+            .filter(Inv.user_id == user_id)
+            .order_by(Inv.expiration_date.desc())
+            .all()
+        )
+
+        result = []
+        for (
+            inv_id,
+            ref_code,
+            prop_id,
+            prop_name,
+            lot_id,
+            lot_name,
+            interval,
+            payment_days,
+            invoiced_period,
+            exp_dt,
+            iss_dt,
+            amount,
+            status,
+            pdf_url,
+            doc_number
+        ) in rows:
+            exp_date = exp_dt.date() if hasattr(exp_dt, "date") else exp_dt
+            iss_date = iss_dt.date() if hasattr(iss_dt, "date") else iss_dt
+            result.append({
+                "invoice_id":       inv_id,
+                "reference_code":   ref_code,
+                "property_id":      prop_id,
+                "property_name":    prop_name,
+                "lot_id":           lot_id,
+                "lot_name":         lot_name,
+                "payment_interval": interval,
+                "payment_days":     payment_days,
+                "invoiced_period":  invoiced_period,
+                "expiration_date":  exp_date,
+                "issuance_date":    iss_date,
+                "total_amount":     float(amount),
+                "status":           status,
+                "pdf_url":          pdf_url,
+                "document_number":  doc_number
+            })
+        return result
+    
     def get_user_info_by_lot(self, lot_id: int):
         try:
             sql = text("""

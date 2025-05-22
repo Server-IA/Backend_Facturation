@@ -1,9 +1,9 @@
 # app/consumption/routes.py
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends 
 from sqlalchemy.orm import Session
-from typing import Dict, List
-
+from typing import Dict, List , Any
+from app.consumption.schemas import LotConsumption
 from app.consumption.services import ConsumptionService
 from app.database import get_db
 
@@ -28,3 +28,20 @@ def get_consumption_detail(measurement_id: int, db: Session = Depends(get_db)):
 @router.get("/users/{user_id}/properties/consumption_total", response_model=Dict)
 def get_properties_consumption_total(user_id: int, db: Session = Depends(get_db)):
     return ConsumptionService(db).get_properties_total_consumption(user_id)
+
+
+@router.get(
+    "/users/{user_id}/lots/consumptions",
+    response_model=List[LotConsumption],
+    summary="Consumo total por lote de un usuario"
+)
+def get_user_lots_consumptions(
+    user_id: int,
+    db: Session = Depends(get_db),
+):
+    return ConsumptionService(db).get_user_lots_consumptions(user_id)
+
+
+@router.get("/lots/{lot_id}/measurements/recent", response_model=List[Dict[str, Any]])
+def get_recent_measurements(lot_id: int, db: Session = Depends(get_db)):
+    return ConsumptionService(db).get_recent_measurements(lot_id)

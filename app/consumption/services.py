@@ -2,12 +2,13 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, aliased
 from datetime import date
-
-from app.facturation.models import PaymentInterval, ConsumptionMeasurement, PropertyUser , Lot, Request, PropertyLot, Property, TypeCrop
+from app.payu.models import Invoice
+from app.facturation.models import PaymentInterval,User, ConsumptionMeasurement, PropertyUser , Lot, Request, PropertyLot, Property, TypeCrop
 from app.facturation.services import MLService
 from app.facturation.schemas import PredictInput
 from app.utils.geo import get_altitude, get_weather_data
 from app.utils.mapping import crop_to_soil_type
+from dateutil.relativedelta import relativedelta
 
 class ConsumptionService:
     def __init__(self, db: Session):
@@ -217,3 +218,99 @@ class ConsumptionService:
                 raise HTTPException(500, f"Error IA lote {lot.id}: {e}")
 
         return {"success": True, "data": {"details": details, "total_predicted_consumption": round(total_pred, 2)}}
+
+    def get_user_lots_consumptions(self, user_id: int) -> list[dict]:
+        """
+        Para cada lote de cada predio del usuario:
+          - Suma consumos del mes anterior
+          - Devuelve property_id, property_name, lot_id, lot_name,
+            total_consumption, billing_start_date, billing_end_date
+        """
+        # 0) Usuario existe?
+        if not self.db.query(User).filter(User.id == user_id).first():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        # 1) Calcular periodo mes anterior
+        today = date.today()
+        first_of_month = today.replace(day=1)
+        billing_start = first_of_month - relativedelta(months=1)
+        billing_end   = first_of_month - relativedelta(seconds=1)
+
+        result: list[dict] = []
+
+        # 2) Obtener todos los predios del usuario
+        prop_ids = [
+            pu.property_id
+            for pu in self.db.query(PropertyUser)
+                           .filter(PropertyUser.user_id == user_id)
+                           .all()
+        ]
+
+        # 3) Para cada predio, iterar sus lotes
+        for prop_id in prop_ids:
+            prop = self.db.get(Property, prop_id)
+            lots = (
+                self.db.query(Lot)
+                       .join(PropertyLot, PropertyLot.lot_id == Lot.id)
+                       .filter(PropertyLot.property_id == prop_id)
+                       .all()
+            )
+            for lot in lots:
+                # 4) Sumar consumos de ese lote en el período
+                recs = (
+                    self.db.query(ConsumptionMeasurement)
+                           .join(Request, Request.id == ConsumptionMeasurement.request_id)
+                           .filter(
+                               Request.lot_id == lot.id,
+                               ConsumptionMeasurement.created_at >= billing_start,
+                               ConsumptionMeasurement.created_at <= billing_end
+                           )
+                           .all()
+                )
+                total = sum(r.final_volume for r in recs)
+
+                result.append({
+                    "property_id":         prop_id,
+                    "property_name":       prop.name if prop else "",
+                    "lot_id":              lot.id,
+                    "lot_name":            lot.name,
+                    "total_consumption":   float(total),
+                    "billing_start_date":  billing_start,
+                    "billing_end_date":    billing_end,
+                })
+
+        return result
+    
+    def get_recent_measurements(self, lot_id: int):
+        lot = self.db.get(Lot, lot_id)
+        if not lot:
+            raise HTTPException(status_code=404, detail="Lote no encontrado")
+
+        # Asumimos primer predio asociado
+        pl = (
+            self.db.query(PropertyLot)
+               .filter(PropertyLot.lot_id == lot_id)
+               .first()
+        )
+        prop = self.db.get(Property, pl.property_id) if pl else None
+
+        recs = (
+            self.db.query(ConsumptionMeasurement)
+               .join(Request, Request.id == ConsumptionMeasurement.request_id)
+               .filter(Request.lot_id == lot_id)
+               .order_by(ConsumptionMeasurement.created_at.desc())
+               .limit(12)
+               .all()
+        )
+
+        return [
+            {
+                "property_id":      prop.id       if prop else None,
+                "property_name":    prop.name     if prop else None,
+                "lot_id":           lot.id,
+                "lot_name":         lot.name,
+                "measurement_date": r.created_at,
+                "final_volume":     r.final_volume
+            }
+            for r in recs
+        ]
