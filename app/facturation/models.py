@@ -233,3 +233,4 @@ class PaymentInterval(Base):
 
     id   = Column(Integer, primary_key=True, index=True)
     name = Column(String(64), nullable=False)
+    interval_days = Column(Integer, nullable=False)

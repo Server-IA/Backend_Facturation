@@ -17,6 +17,10 @@ router = APIRouter(prefix="/my_facturation", tags=["MyFacturación"])
 def get_user_invoices(user_id: int, db: Session = Depends(get_db)):
     return MyFacturationService(db).list_user_invoices(user_id)
 
+@router.get("/invoices/user/{user_id}/latest", response_model=List[UserInvoice])
+def get_user_latest_invoices(user_id: int, db: Session = Depends(get_db)):
+    return MyFacturationService(db).list_user_latest_invoices_by_lot(user_id)
+
 @router.get("/invoices/user/{user_id}/summary")
 def get_user_invoices_summary(user_id: int, db: Session = Depends(get_db)):
     return {"success": True, "data": MyFacturationService(db).get_user_invoice_summary(user_id)}

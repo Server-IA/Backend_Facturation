@@ -21,6 +21,7 @@ class Invoice(Base):
     status = Column(String(20), default="pendiente")
     pdf_url = Column(String(500), nullable=True)
     xml_url = Column(String(500), nullable=True)
+    invoiced_period = Column(Integer, nullable=False)
 
 
     # Nuevos campos para Factus
