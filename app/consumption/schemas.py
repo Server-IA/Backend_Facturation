@@ -40,3 +40,11 @@ class LotConsumption(BaseModel):
 
 class ProjectedMonthlyAvg(BaseModel):
     projected_monthly_avg: Dict[int, float]  # mes (1-12) -> promedio proyectado
+
+class UserLotConsumptionRecord(BaseModel):
+    property_name: str
+    lot_id: int
+    lot_name: str
+    payment_interval: Optional[str]
+    measurement_date: datetime
+    final_volume: float

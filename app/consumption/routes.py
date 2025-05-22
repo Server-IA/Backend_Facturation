@@ -6,7 +6,7 @@ from typing import Dict, List , Any
 from app.consumption.schemas import LotConsumption, ConsumptionStats
 from app.consumption.services import ConsumptionService
 from app.database import get_db
-from app.consumption.schemas import ProjectedMonthlyAvg
+from app.consumption.schemas import ProjectedMonthlyAvg, UserLotConsumptionRecord
 
 router = APIRouter(prefix="/consumption", tags=["Consumo"])
 
@@ -29,6 +29,22 @@ def consumption_summary(year: int, month: int, db: Session = Depends(get_db)):
 @router.get("/measurements/district_prediction", response_model=Dict)
 def predict_district_consumption(db: Session = Depends(get_db)):
     return ConsumptionService(db).predict_district_consumption()
+
+@router.get(
+    "/users/{user_id}/lots/measurements",
+    response_model=List[UserLotConsumptionRecord],
+    summary="Lista de consumos por lote del usuario"
+)
+def get_user_consumptions(user_id: int, db: Session = Depends(get_db)):
+    return ConsumptionService(db).get_user_all_consumptions(user_id)
+
+@router.get(
+    "/users/{user_id}/projected_avg_by_month/{year}",
+    response_model=ProjectedMonthlyAvg,
+    summary="Consumo proyectado mensual por IA de un usuario en un año"
+)
+def get_user_projected_by_month(user_id: int, year: int, db: Session = Depends(get_db)):
+    return ConsumptionService(db).get_user_monthly_projected_by_year(user_id, year)
 
 @router.get("/measurements/{measurement_id}", response_model=Dict)
 def get_consumption_detail(measurement_id: int, db: Session = Depends(get_db)):

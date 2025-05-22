@@ -213,6 +213,114 @@ class ConsumptionService:
             "projected_avg":     round(projected_avg, 2),
             "variation_percent": variation
         }
+    
+    def get_user_all_consumptions(self, user_id: int) -> list[dict]:
+        PI = aliased(PaymentInterval)
+
+        rows = (
+            self.db.query(
+                Property.name.label("property_name"),
+                Lot.name.label("lot_name"),
+                Lot.id.label("lot_id"),
+                PI.name.label("payment_interval"),
+                ConsumptionMeasurement.created_at.label("measurement_date"),
+                ConsumptionMeasurement.final_volume,
+            )
+            .select_from(ConsumptionMeasurement)
+            .join(Request, ConsumptionMeasurement.request_id == Request.id)
+            .join(Lot, Request.lot_id == Lot.id)
+            .outerjoin(PI, Lot.payment_interval_id == PI.id)
+            .join(PropertyLot, PropertyLot.lot_id == Lot.id)
+            .join(Property, Property.id == PropertyLot.property_id)
+            .join(PropertyUser, PropertyUser.property_id == Property.id)
+            .filter(PropertyUser.user_id == user_id)
+            .order_by(ConsumptionMeasurement.created_at.desc())
+            .all()
+        )
+        
+        return [
+            {
+                "property_name":   prop_name,
+                "lot_name":        lot_name,
+                "lot_id":           lot_id,
+                "payment_interval": interval,
+                "measurement_date": m_date,
+                "final_volume":     float(vol)
+            }
+            for prop_name, lot_name, lot_id, interval, m_date, vol in rows
+        ]
+    
+    def get_user_monthly_projected_by_year(self, user_id: int, year: int) -> dict:
+        from collections import defaultdict
+
+        # Verifica que el usuario exista
+        user = self.db.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        # Obtener lotes asociados al usuario
+        lot_ids = (
+            self.db.query(Lot.id)
+            .join(PropertyLot, PropertyLot.lot_id == Lot.id)
+            .join(PropertyUser, PropertyUser.property_id == PropertyLot.property_id)
+            .filter(PropertyUser.user_id == user_id)
+            .all()
+        )
+        lot_ids = [l.id for l in lot_ids]
+        if not lot_ids:
+            return {"projected_monthly_avg": {i: 0.0 for i in range(1, 13)}}
+
+        # Obtener mediciones del año y lotes del usuario
+        mediciones = (
+            self.db.query(ConsumptionMeasurement)
+            .join(Request, ConsumptionMeasurement.request_id == Request.id)
+            .filter(
+                func.extract("year", ConsumptionMeasurement.created_at) == year,
+                Request.lot_id.in_(lot_ids)
+            )
+            .all()
+        )
+
+        # Agrupar mediciones por mes
+        mediciones_por_mes = defaultdict(list)
+        for m in mediciones:
+            mes = m.created_at.month
+            mediciones_por_mes[mes].append(m)
+
+        resultados = {}
+        for mes in range(1, 13):
+            mediciones_mes = mediciones_por_mes.get(mes, [])
+            if not mediciones_mes:
+                resultados[mes] = 0.0
+                continue
+
+            proy_mes = []
+            for m in mediciones_mes:
+                req = self.db.get(Request, m.request_id)
+                lot = self.db.get(Lot, req.lot_id)
+                tc = self.db.get(TypeCrop, lot.type_crop_id)
+                crop_name = tc.name if tc else None
+                soil = crop_to_soil_type(crop_name or "")
+                alt = get_altitude(lot.latitude, lot.longitude)
+                weather = get_weather_data(lot.latitude, lot.longitude)
+
+                inp = PredictInput(
+                    Temperatura=weather["temp"],
+                    Humedad=weather["humidity"],
+                    Altitud=alt,
+                    AreaCultivo=lot.extension,
+                    TipoCultivo=crop_name or "",
+                    TipoTierra=soil,
+                    lot_id=lot.id,
+                )
+                pred = self.ml.predict_consumption(inp)
+                proy_mes.append(pred.get("consumo_ajustado_final", 0.0))
+
+            promedio = sum(proy_mes) / len(proy_mes) if proy_mes else 0.0
+            resultados[mes] = round(promedio, 2)
+
+        return {"projected_monthly_avg": resultados}
+
 
     def get_consumption_detail(self, measurement_id: int):
         rec = self.db.get(ConsumptionMeasurement, measurement_id)
