@@ -3,15 +3,24 @@
 from fastapi import APIRouter, Depends 
 from sqlalchemy.orm import Session
 from typing import Dict, List , Any
-from app.consumption.schemas import LotConsumption
+from app.consumption.schemas import LotConsumption, ConsumptionStats
 from app.consumption.services import ConsumptionService
 from app.database import get_db
+from app.consumption.schemas import ProjectedMonthlyAvg
 
 router = APIRouter(prefix="/consumption", tags=["Consumo"])
 
 @router.get("/measurements", response_model=List[Dict])
 def list_consumptions(db: Session = Depends(get_db)):
     return ConsumptionService(db).list_all_consumptions()
+
+@router.get("/measurements/projected_avg/{year}", response_model=ConsumptionStats)
+def get_yearly_projected_average(year: int, db: Session = Depends(get_db)):
+    return ConsumptionService(db).get_projected_avg_by_year(year)
+
+@router.get("/measurements/projected_avg_by_month/{year}", response_model=ProjectedMonthlyAvg)
+def get_projected_by_month(year: int, db: Session = Depends(get_db)):
+    return ConsumptionService(db).get_monthly_projected_by_year(year)
 
 @router.get("/measurements/summary/{year}/{month}", response_model=Dict)
 def consumption_summary(year: int, month: int, db: Session = Depends(get_db)):

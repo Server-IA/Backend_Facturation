@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 class ConsumptionRecord(BaseModel):
     property_id:      int
@@ -37,3 +37,6 @@ class LotConsumption(BaseModel):
     total_consumption: float
     billing_start_date: datetime | None
     billing_end_date: datetime | None
+
+class ProjectedMonthlyAvg(BaseModel):
+    projected_monthly_avg: Dict[int, float]  # mes (1-12) -> promedio proyectado

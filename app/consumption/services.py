@@ -17,32 +17,156 @@ class ConsumptionService:
 
     def list_all_consumptions(self):
         PI = aliased(PaymentInterval)
+
         rows = (
             self.db.query(
                 PropertyLot.property_id,
                 Lot.id.label("lot_id"),
                 PI.name.label("payment_interval"),
                 ConsumptionMeasurement.created_at.label("measurement_date"),
-                ConsumptionMeasurement.final_volume
+                ConsumptionMeasurement.final_volume,
+                User.document_number.label("document_number")
             )
             .select_from(ConsumptionMeasurement)
             .join(Request, ConsumptionMeasurement.request_id == Request.id)
             .join(Lot, Request.lot_id == Lot.id)
             .outerjoin(PI, Lot.payment_interval_id == PI.id)
             .join(PropertyLot, PropertyLot.lot_id == Lot.id)
+            .join(PropertyUser, PropertyUser.property_id == PropertyLot.property_id)
+            .join(User, User.id == PropertyUser.user_id)
             .order_by(ConsumptionMeasurement.created_at.desc())
             .all()
         )
+
         return [
             {
                 "property_id":      prop,
                 "lot_id":           lot,
                 "payment_interval": interval,
                 "measurement_date": m_date,
-                "final_volume":     float(vol)
+                "final_volume":     float(vol),
+                "document_number":  doc
             }
-            for prop, lot, interval, m_date, vol in rows
+            for prop, lot, interval, m_date, vol, doc in rows
         ]
+    
+
+    def get_projected_avg_by_year(self, year: int) -> dict:
+        from calendar import monthrange
+
+        # Filtrar registros del año dado
+        recs = (
+            self.db.query(ConsumptionMeasurement)
+            .filter(func.extract("year", ConsumptionMeasurement.created_at) == year)
+            .all()
+        )
+        if not recs:
+            raise HTTPException(status_code=404, detail="No hay registros de consumo para ese año")
+
+        # Agrupar por mes
+        registros_por_mes: dict[int, list[ConsumptionMeasurement]] = {}
+        for rec in recs:
+            mes = rec.created_at.month
+            registros_por_mes.setdefault(mes, []).append(rec)
+
+        promedios_registrados = []
+        promedios_proyectados = []
+
+        for mes, mediciones in registros_por_mes.items():
+            total_mes = sum(m.final_volume for m in mediciones)
+            avg_mes = total_mes / len(mediciones)
+            promedios_registrados.append(avg_mes)
+
+            proy_mes = []
+            for m in mediciones:
+                req = self.db.get(Request, m.request_id)
+                lot = self.db.get(Lot, req.lot_id)
+                tc = self.db.get(TypeCrop, lot.type_crop_id)
+                crop_name = tc.name if tc else None
+                soil = crop_to_soil_type(crop_name or "")
+                alt = get_altitude(lot.latitude, lot.longitude)
+                weather = get_weather_data(lot.latitude, lot.longitude)
+
+                inp = PredictInput(
+                    Temperatura=weather["temp"],
+                    Humedad=weather["humidity"],
+                    Altitud=alt,
+                    AreaCultivo=lot.extension,
+                    TipoCultivo=crop_name or "",
+                    TipoTierra=soil,
+                    lot_id=lot.id,
+                )
+                pred = self.ml.predict_consumption(inp)
+                proy_mes.append(pred.get("consumo_ajustado_final", 0.0))
+
+            if proy_mes:
+                promedios_proyectados.append(sum(proy_mes) / len(proy_mes))
+
+        if not promedios_registrados or not promedios_proyectados:
+            raise HTTPException(status_code=400, detail="No se pudieron calcular promedios")
+
+        avg_reg = sum(promedios_registrados) / len(promedios_registrados)
+        avg_proy = sum(promedios_proyectados) / len(promedios_proyectados)
+        variacion = round((avg_proy - avg_reg) / (avg_reg or 1) * 100, 2)
+
+        return {
+            "registered_avg":    round(avg_reg, 2),
+            "projected_avg":     round(avg_proy, 2),
+            "variation_percent": variacion,
+        }
+
+
+    def get_monthly_projected_by_year(self, year: int) -> dict:
+        from collections import defaultdict
+
+        # Agrupar mediciones por mes
+        mediciones_por_mes = defaultdict(list)
+
+        mediciones = (
+            self.db.query(ConsumptionMeasurement)
+            .filter(func.extract("year", ConsumptionMeasurement.created_at) == year)
+            .all()
+        )
+
+        for m in mediciones:
+            mes = m.created_at.month
+            mediciones_por_mes[mes].append(m)
+
+        resultados: dict[int, float] = {}
+
+        for mes in range(1, 13):
+            mediciones_mes = mediciones_por_mes.get(mes, [])
+            if not mediciones_mes:
+                resultados[mes] = 0.0
+                continue
+
+            proy_mes = []
+            for m in mediciones_mes:
+                req = self.db.get(Request, m.request_id)
+                lot = self.db.get(Lot, req.lot_id)
+                tc = self.db.get(TypeCrop, lot.type_crop_id)
+                crop_name = tc.name if tc else None
+                soil = crop_to_soil_type(crop_name or "")
+                alt = get_altitude(lot.latitude, lot.longitude)
+                weather = get_weather_data(lot.latitude, lot.longitude)
+
+                inp = PredictInput(
+                    Temperatura=weather["temp"],
+                    Humedad=weather["humidity"],
+                    Altitud=alt,
+                    AreaCultivo=lot.extension,
+                    TipoCultivo=crop_name or "",
+                    TipoTierra=soil,
+                    lot_id=lot.id,
+                )
+                pred = self.ml.predict_consumption(inp)
+                proy_mes.append(pred.get("consumo_ajustado_final", 0.0))
+
+            promedio = sum(proy_mes) / len(proy_mes) if proy_mes else 0.0
+            resultados[mes] = round(promedio, 2)
+
+        return {"projected_monthly_avg": resultados}
+
 
     def get_monthly_stats(self, year: int, month: int):
         recs = (
