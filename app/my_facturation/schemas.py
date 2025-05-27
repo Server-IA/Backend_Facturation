@@ -16,7 +16,7 @@ class UserInvoice(BaseModel):
     expiration_date: date
     issuance_date: date
     total_amount: float
-    status: str
+    invoice_status: str
     pdf_url: Optional[str]
     document_number: int
     invoiced_period: int

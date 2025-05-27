@@ -16,7 +16,7 @@ load_dotenv()
 from app.ml import get_models
 
 app = FastAPI(
-    title="Distrito de Riego API Gateway - Mantenimiento",
+    title="Distrito de Riego API Gateway - Facturación",
     description="API Gateway para Mantenimiento en el sistema de riego",
     version="1.0.0"
 )

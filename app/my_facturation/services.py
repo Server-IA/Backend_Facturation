@@ -92,7 +92,7 @@ class MyFacturationService:
                 "expiration_date":  exp_date,
                 "issuance_date":    iss_date,
                 "total_amount":     float(amount),
-                "status":           status,
+                "invoice_status":   status,
                 "pdf_url":          pdf_url,
                 "document_number":  doc_number
             })
@@ -155,7 +155,7 @@ class MyFacturationService:
                 "expiration_date":  exp_date,
                 "issuance_date":    iss_date,
                 "total_amount":     float(row.total_amount),
-                "status":           row.status,
+                "invoice_status":   row.status,
                 "pdf_url":          row.pdf_url,
                 "document_number":  row.document_number
             })
