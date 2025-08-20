@@ -9,6 +9,7 @@ env
 venv_disriego_iot
 uploads
 .pytest_cache/
+.python-version
 
 /.env
 .env
