@@ -16,6 +16,7 @@ load_dotenv()
 from app.ml import get_models
 
 app = FastAPI(
+    root_path="/disriego/facturation",
     title="Distrito de Riego API Gateway - Facturación",
     description="API Gateway para Mantenimiento en el sistema de riego",
     version="1.0.0"

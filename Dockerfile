@@ -1,5 +1,5 @@
 # Usa Python 3.11 como imagen base
-FROM python:3.11.0
+FROM python:3.11
 
 # Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
@@ -14,4 +14,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 
 # Comando de inicio del backend
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
