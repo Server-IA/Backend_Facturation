@@ -1,12 +1,21 @@
-# routes.py
-from fastapi import APIRouter, Depends , Body , HTTPException
-from typing import Dict, Any , List
+from fastapi import APIRouter, Depends, Body, HTTPException, Query
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+from datetime import datetime, date
 
 from app.database import get_db
-from app.facturation.services import FacturationService , MLService , InvoiceService
-from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput , ConceptTypeOut , ScopeTypeOut ,ConsumptionPredictionOut, PredictByLot, ConceptResponse
-
+from app.facturation.services import FacturationService, MLService, InvoiceService, EconomicEventsService
+from app.facturation.schemas import (
+    ConceptCreate,
+    ConceptUpdate,
+    PredictInput,
+    ConceptTypeOut,
+    ScopeTypeOut,
+    ConsumptionPredictionOut,
+    PredictByLot,
+    ConceptResponse,    
+    FacturationEconomicEventsResponse
+)
 
 router = APIRouter(prefix="/facturations", tags=["Facturations"])
 # router_invoice = APIRouter(prefix="/facturations", tags=["Facturation"])
@@ -25,13 +34,11 @@ def list_concepts(db: Session = Depends(get_db)):
 def get_concept_types(db: Session = Depends(get_db)):
     return FacturationService(db).list_concept_types()
 
+
 @router.get("/scope_types", response_model=List[ScopeTypeOut])
 def get_scope_types(db: Session = Depends(get_db)):
     return FacturationService(db).list_scope_types()
 
-@router.get("/{concept_id}", response_model=Dict[str, Any], summary="Ver detalles de un concepto")
-def get_concept(concept_id: int, db: Session = Depends(get_db)):
-    return FacturationService(db).get_concept(concept_id)
 
 @router.post(
     "/",
@@ -48,10 +55,8 @@ def add_concept(
     """
     try:
         concept = FacturationService(db).create_concept(payload)
-        # FastAPI usará ConceptResponse para serializar el SQLAlchemy model
         return ConceptResponse(success=True, data=concept)
     except HTTPException as he:
-        # Propaga errores de validación del servicio
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -62,7 +67,7 @@ def edit_concept(concept_id: int, payload: ConceptUpdate, db: Session = Depends(
     return FacturationService(db).update_concept(concept_id, payload)
 
 
-@router.patch("/{concept_id}/enable",  response_model=Dict[str, Any])
+@router.patch("/{concept_id}/enable", response_model=Dict[str, Any])
 def enable_concept(concept_id: int, db: Session = Depends(get_db)):
     """
     Habilita un concepto (estado_id = 27).
@@ -78,7 +83,6 @@ def disable_concept(concept_id: int, db: Session = Depends(get_db)):
     return FacturationService(db).disable_concept(concept_id)
 
 
-
 @router.post(
     "/predict-consumption",
     response_model=ConsumptionPredictionOut,
@@ -91,8 +95,33 @@ def predict_consumption(payload: PredictByLot, db: Session = Depends(get_db)):
 def get_invoice_detail(invoice_id: int, db: Session = Depends(get_db)):
     return InvoiceService(db).get_invoice_detail(invoice_id)
 
+
+@router.get("/{concept_id}", response_model=Dict[str, Any], summary="Ver detalles de un concepto")
+def get_concept(concept_id: int, db: Session = Depends(get_db)):
+    return FacturationService(db).get_concept(concept_id)
+
+
 @router.post("/create", status_code=201)
 def create_invoice(payload: dict, db: Session = Depends(get_db)):
     invoice = InvoiceService(db).create_invoice(payment_data=payload)
     return invoice
 
+
+# =========================================================
+# NUEVO ROUTER RF-INT-34 / AAEF
+# AGREGADO SIN TOCAR LAS RUTAS EXISTENTES
+# =========================================================
+@router.get(
+    "/{sincePeriod}/{untilPeriod}",
+    response_model=FacturationEconomicEventsResponse,
+    summary="Obtener eventos económicos por período en formato AAEF"
+)
+def get_economic_events_by_period(
+    sincePeriod: date,
+    untilPeriod: date,
+    db: Session = Depends(get_db)
+):
+    return EconomicEventsService(db).get_economic_events_by_period(
+        since_period=sincePeriod,
+        until_period=untilPeriod
+    )

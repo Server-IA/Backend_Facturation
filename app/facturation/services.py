@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
-from app.facturation.models import Concept, Lot , PropertyLot, Property,PropertyUser,ConsumptionMeasurement, Request , InvoiceConcept , ConceptType, ScopeType
+from app.facturation.models import Concept, Lot, PropertyLot, Property, PropertyUser, ConsumptionMeasurement, Request, InvoiceConcept, ConceptType, ScopeType, PaymentInterval
 from app.facturation.schemas import ConceptCreate, ConceptUpdate , PredictInput
 from app.payu.models import Invoice, Payment
 from app.ml import (
@@ -17,6 +17,7 @@ from app.ml import (
 )
 from app.utils.geo import get_altitude, get_weather_data
 from app.utils.mapping import crop_to_soil_type
+from math import ceil
 
 class MLService:
     def __init__(
@@ -382,7 +383,7 @@ class FacturationService:
             return JSONResponse(status_code=he.status_code, content={"success": False, "data": {"title": "Validación", "message": he.detail}})
         except Exception as e:
             return JSONResponse(status_code=500, content={"success": False, "data": {"title": "Error al inhabilitar concepto", "message": str(e)}})
-        
+ 
 class InvoiceService:
     def __init__(self, db):
         self.db = db
@@ -473,11 +474,11 @@ class InvoiceService:
                 "client_document":    client_document,
                 "property_id":        property_id,
                 "lot_id":             invoice.lot_id,
-                "invoice_status_name":invoice.status,
+                "invoice_status_name": invoice.status,
                 "dian_status_id":     invoice.dian_status,
                 "dian_status_name":   invoice.dian_status
             },
-            "payment":  payment_data,
+            "payment": payment_data,
             "concepts": conceptos
         }
 
@@ -606,35 +607,8 @@ class InvoiceService:
                     content={
                         "success": False,
                         "data": {"title": "Facturación pendiente", "message": "Ya existe una facturación pendiente para este lote."},
-                        },
-                    )
-
-            # sql = text("""
-            #     SELECT cm.*
-            #     FROM consumption_measurements cm
-            #     INNER JOIN request r ON r.id = cm.request_id  
-            #     WHERE cm.invoice_id IS NULL
-            #     AND cm.created_at >= :start_date
-            #     AND r.lot_id = :lot_id
-            #     AND cm.created_at <= :end_date
-            # """)
-
-            # result = self.db.execute(sql, {
-            #     "lot_id": invoice.lot_id,
-            #     "start_date": invoice.billing_start_date,
-            #     "end_date": invoice.billing_end_date
-            # })
-
-            # consumptions = result.fetchall()
-
-            # if not consumptions:
-            #     return JSONResponse(
-            #         status_code=400,
-            #         content={
-            #             "success": False,
-            #             "data": {"title": "Facturación pendiente", "message": "No se puede crear la factura porque no existen consumos."},
-            #             },
-            #         )
+                    },
+                )
             
             user_lots = self.get_user_info_by_lot(payment_data["lot_id"])
             # 1. Generar código de referencia único
@@ -670,7 +644,6 @@ class InvoiceService:
 
             self.link_consumptions_and_calculate_total(invoice)
 
-            # pass
             factus = FactusService(self.db)
             result = factus.generate_invoice_from_payment(invoice, user_lots)
 
@@ -757,5 +730,307 @@ class InvoiceService:
 
         except Exception as e:
             raise Exception(f"Error linking consumptions: {e}")
+        
+# =========================================================
+# NUEVO SERVICIO RF-INT-34 / AAEF
+# AGREGADO AL FINAL SIN TOCAR LOS SERVICIOS EXISTENTES
+# =========================================================
+class EconomicEventsService:
+    def __init__(self, db: Session):
+        self.db = db
 
-    
+    def _normalize_period_value(self, value):
+        if value is None:
+            return None
+
+        if isinstance(value, datetime):
+            return value.date()
+
+        if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+            return value
+
+        if isinstance(value, str):
+            try:
+                return datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Las fechas sincePeriod y untilPeriod deben tener formato YYYY-MM-DD"
+                )
+
+        raise HTTPException(
+            status_code=400,
+            detail="Formato de fecha no válido para sincePeriod o untilPeriod"
+        )
+
+    def _split_reference_code(self, reference_code: str):
+        if not reference_code:
+            return None, None
+
+        parts = reference_code.split("-")
+        if len(parts) >= 2:
+            return parts[0], parts[-1]
+
+        return reference_code, None
+
+    def _map_invoice_status(self, status: str) -> str:
+        value = (status or "").strip().lower()
+        mapping = {
+            "pagada": "ACTIVE",
+            "pendiente": "PENDING",
+            "anulada": "CANCELLED"
+        }
+        return mapping.get(value, (status or "UNKNOWN").upper())
+
+    def _map_payment_status(self, status) -> str:
+        value = str(status).strip()
+        mapping = {
+            "4": "COMPLETED"
+        }
+        return mapping.get(value, "UNKNOWN")
+
+    def _map_payment_method(self, payment_method) -> str:
+        if payment_method is None:
+            return "UNKNOWN"
+        return str(payment_method).strip().upper()
+
+    def _get_user_from_invoice(self, invoice):
+        try:
+            from app.facturation.models import User
+            if not getattr(invoice, "user_id", None):
+                return None
+            return self.db.get(User, invoice.user_id)
+        except Exception:
+            return None
+
+    def _build_third_party(self, invoice):
+        user = self._get_user_from_invoice(invoice)
+
+        full_name = None
+        if user:
+            full_name = " ".join(filter(None, [
+                getattr(user, "name", None),
+                getattr(user, "first_last_name", None),
+                getattr(user, "second_last_name", None)
+            ])).strip() or None
+
+        nit_value = getattr(user, "document_number", None) if user else None
+        nit_value = str(nit_value) if nit_value is not None else None
+
+        return {
+            "NIT": nit_value,
+            "Name": getattr(invoice, "client_name", None) or full_name,
+            "Address": getattr(user, "address", None) if user else None,
+            "City": getattr(user, "city", None) if user else None,
+            "Country": getattr(user, "country", None) if user and getattr(user, "country", None) else "CO",
+            "Email": getattr(invoice, "client_email", None) or (getattr(user, "email", None) if user else None)
+        }
+
+    def _build_invoice_lines(self, invoice_id: int):
+        rows = (
+            self.db.query(InvoiceConcept, Concept)
+            .join(Concept, Concept.id == InvoiceConcept.concept_id)
+            .filter(InvoiceConcept.invoice_id == invoice_id)
+            .all()
+        )
+
+        lines = []
+        for invoice_concept, concept in rows:
+            line_type = None
+            try:
+                line_type = concept.tipo.name if getattr(concept, "tipo", None) else None
+            except Exception:
+                line_type = None
+
+            total_amount = float(invoice_concept.total_amount or 0)
+
+            raw_accounting_account = getattr(concept, "accounting_account", None)
+
+            if raw_accounting_account is None:
+                accounting_account = []
+            elif isinstance(raw_accounting_account, list):
+                accounting_account = [str(x) for x in raw_accounting_account if x is not None]
+            elif isinstance(raw_accounting_account, str):
+                value = raw_accounting_account.strip()
+
+                # Caso tipo array de postgres serializado: {41013,41014}
+                if value.startswith("{") and value.endswith("}"):
+                    inner = value[1:-1].strip()
+                    accounting_account = [x.strip().strip('"') for x in inner.split(",") if x.strip()]
+                # Caso JSON simple tipo ["41013"]
+                elif value.startswith("[") and value.endswith("]"):
+                    cleaned = value.strip("[]").replace('"', "").replace("'", "")
+                    accounting_account = [x.strip() for x in cleaned.split(",") if x.strip()]
+                else:
+                    accounting_account = [value]
+            else:
+                accounting_account = [str(raw_accounting_account)]
+
+            lines.append({
+                "Code": str(concept.id),
+                "Name": concept.nombre,
+                "Description": concept.descripcion,
+                "LineType": line_type,
+                "accounting_account": accounting_account,
+                "Quantity": 1.0,
+                "UnitPrice": total_amount,
+                "Value": total_amount,
+                "Taxes": []
+            })
+
+        return lines
+
+    def _build_invoice_document(self, invoice):
+        prefix, serial = self._split_reference_code(invoice.reference_code)
+        third_party = self._build_third_party(invoice)
+        lines = self._build_invoice_lines(invoice.id)
+
+        subtotal = round(sum(line["Value"] for line in lines), 2)
+        total_payment = round(float(invoice.total_amount or 0), 2)
+
+        return {
+            "Header": {
+                "DocumentId": invoice.reference_code,
+                "Prefix": prefix,
+                "Serial": serial,
+                "Type": {
+                    "Code": "01",
+                    "Name": "Factura de Venta"
+                },
+                "IssueDate": invoice.issuance_date.date().isoformat() if invoice.issuance_date else None,
+                "DueDate": invoice.expiration_date.date().isoformat() if invoice.expiration_date else None,
+                "Status": self._map_invoice_status(invoice.status),
+                "UpdatedAt": invoice.billing_end_date.date().isoformat() if invoice.billing_end_date else None
+            },
+            "ThirdParty": third_party,
+            "Totals": {
+                "Subtotal": subtotal if subtotal > 0 else total_payment,
+                "TotalVAT": 0.0,
+                "TotalWithholdings": 0.0,
+                "TotalDiscounts": 0.0,
+                "TotalPayment": total_payment,
+                "OutstandingBalance": 0.0
+            },
+            "Lines": lines
+        }
+
+    def _build_transaction_document_id(self, invoice_reference_code: str, payment):
+        payment_date = payment.paid_at.date().isoformat() if payment.paid_at else datetime.utcnow().date().isoformat()
+        return f"PAY-{invoice_reference_code}-{payment_date}"
+
+    def _build_transaction_document(self, invoice, payment):
+        third_party = self._build_third_party(invoice)
+
+        notes_parts = []
+        if third_party.get("Email"):
+            notes_parts.append(f"Pagador: {third_party['Email']}")
+        if getattr(payment, "reference_code", None):
+            notes_parts.append(f"Ref: {payment.reference_code}")
+        if getattr(payment, "transaction_id", None):
+            notes_parts.append(f"TxID: {payment.transaction_id}")
+
+        return {
+            "DocumentId": self._build_transaction_document_id(invoice.reference_code, payment),
+            "Date": payment.paid_at.date().isoformat() if payment.paid_at else None,
+            "RelatedInvoiceId": invoice.reference_code,
+            "ThirdParty": {
+                "NIT": third_party.get("NIT"),
+                "Name": third_party.get("Name")
+            },
+            "Amount": round(float(payment.amount or 0), 2),
+            "Currency": "COP",
+            "Status": self._map_payment_status(payment.status),
+            "Notes": " | ".join(notes_parts) if notes_parts else None,
+            "UpdatedAt": payment.paid_at,
+            "Type": {
+                "Code": "PAY",
+                "Name": "Pago de Factura"
+            },
+            "PaymentMethod": {
+                "Code": self._map_payment_method(getattr(payment, "payment_method", None))
+            }
+        }
+
+    def _build_metadata(self, since_period, until_period):
+        return {
+            "ExchangeId": f"AF-{datetime.utcnow().strftime('%Y-%m')}-000001",
+            "GeneratedAt": datetime.utcnow(),
+            "StandardVersion": "1.0",
+            "RequestedPeriod": {
+                "From": str(since_period),
+                "To": str(until_period)
+            },
+            "SourceSystem": {
+                "SystemId": "disriego-prod-01",
+                "SystemName": "Disriego",
+                "SystemNIT": "901724254",
+                "Environment": "production"
+            },
+            "GeneratedBy": "disriego-api"
+        }
+
+    def get_economic_events_by_period(self, since_period, until_period):
+        since_period = self._normalize_period_value(since_period)
+        until_period = self._normalize_period_value(until_period)
+
+        if since_period > until_period:
+            raise HTTPException(
+                status_code=400,
+                detail="sincePeriod no puede ser mayor que untilPeriod"
+            )
+
+        rows = (
+            self.db.query(Invoice, Payment)
+            .join(Payment, Payment.invoice_id == Invoice.id)
+            .filter(
+                func.date(Invoice.billing_start_date) >= since_period,
+                func.date(Invoice.billing_end_date) <= until_period
+            )
+            .order_by(Invoice.id.asc(), Payment.paid_at.asc(), Payment.id.asc())
+            .all()
+        )
+
+        if not rows:
+            return {
+                "metadata": self._build_metadata(since_period, until_period),
+                "summary": {
+                    "TotalDocuments": 0,
+                    "TotalInvoices": 0,
+                    "TotalTransactions": 0,
+                    "TotalGrossAmount": 0.0,
+                    "TotalNet": 0.0,
+                    "Currency": "COP"
+                },
+                "invoices": [],
+                "transactions": []
+            }
+
+        seen_invoice_ids = set()
+        invoices = []
+        transactions = []
+
+        for invoice, payment in rows:
+            if invoice.id not in seen_invoice_ids:
+                invoices.append(self._build_invoice_document(invoice))
+                seen_invoice_ids.add(invoice.id)
+
+            transactions.append(self._build_transaction_document(invoice, payment))
+
+        total_gross_amount = round(
+            sum(item["Totals"]["TotalPayment"] for item in invoices),
+            2
+        )
+
+        return {
+            "metadata": self._build_metadata(since_period, until_period),
+            "summary": {
+                "TotalDocuments": len(invoices) + len(transactions),
+                "TotalInvoices": len(invoices),
+                "TotalTransactions": len(transactions),
+                "TotalGrossAmount": total_gross_amount,
+                "TotalNet": total_gross_amount,
+                "Currency": "COP"
+            },
+            "invoices": invoices,
+            "transactions": transactions
+        }

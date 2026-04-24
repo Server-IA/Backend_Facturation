@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 from decimal import Decimal
 
@@ -121,3 +121,116 @@ class ConsumptionPredictionOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# =========================================================
+# NUEVOS SCHEMAS RF-INT-34 / AAEF
+# AGREGADOS AL FINAL SIN TOCAR LO EXISTENTE
+# =========================================================
+
+class AAEFTypeOut(BaseModel):
+    Code: str
+    Name: str
+
+
+class AAEFRequestedPeriodOut(BaseModel):
+    From: str
+    To: str
+
+
+class AAEFSourceSystemOut(BaseModel):
+    SystemId: Optional[str] = None
+    SystemName: Optional[str] = None
+    SystemNIT: Optional[str] = None
+    Environment: Optional[str] = None
+
+
+class AAEFMetadataOut(BaseModel):
+    ExchangeId: Optional[str] = None
+    GeneratedAt: Optional[datetime] = None
+    StandardVersion: Optional[str] = None
+    RequestedPeriod: Optional[AAEFRequestedPeriodOut] = None
+    SourceSystem: Optional[AAEFSourceSystemOut] = None
+    GeneratedBy: Optional[str] = None
+
+
+class AAEFThirdPartyOut(BaseModel):
+    NIT: Optional[str] = None
+    Name: Optional[str] = None
+    Address: Optional[str] = None
+    City: Optional[str] = None
+    Country: Optional[str] = None
+    Email: Optional[str] = None
+
+
+class AAEFInvoiceHeaderOut(BaseModel):
+    DocumentId: str
+    Prefix: Optional[str] = None
+    Serial: Optional[str] = None
+    Type: AAEFTypeOut
+    IssueDate: Optional[str] = None
+    DueDate: Optional[str] = None
+    Status: Optional[str] = None
+    UpdatedAt: Optional[str] = None
+
+
+class AAEFInvoiceTotalsOut(BaseModel):
+    Subtotal: float
+    TotalVAT: float = 0.0
+    TotalWithholdings: float = 0.0
+    TotalDiscounts: float = 0.0
+    TotalPayment: float
+    OutstandingBalance: float
+
+
+class AAEFInvoiceLineOut(BaseModel):
+    Code: Optional[str] = None
+    Name: str
+    Description: Optional[str] = None
+    LineType: Optional[str] = None
+    accounting_account: List[str] = Field(default_factory=list)
+    Quantity: float = 1.0
+    UnitPrice: float
+    Value: float
+    Taxes: List[dict] = Field(default_factory=list)
+
+
+class AAEFInvoiceOut(BaseModel):
+    Header: AAEFInvoiceHeaderOut
+    ThirdParty: AAEFThirdPartyOut
+    Totals: AAEFInvoiceTotalsOut
+    Lines: List[AAEFInvoiceLineOut] = Field(default_factory=list)
+
+
+class AAEFPaymentMethodOut(BaseModel):
+    Code: Optional[str] = None
+
+
+class AAEFTransactionOut(BaseModel):
+    DocumentId: str
+    Date: Optional[str] = None
+    RelatedInvoiceId: str
+    ThirdParty: AAEFThirdPartyOut
+    Amount: float
+    Currency: str = "COP"
+    Status: str
+    Notes: Optional[str] = None
+    UpdatedAt: Optional[datetime] = None
+    Type: AAEFTypeOut
+    PaymentMethod: Optional[AAEFPaymentMethodOut] = None
+
+
+class AAEFSummaryOut(BaseModel):
+    TotalDocuments: int
+    TotalInvoices: int
+    TotalTransactions: int
+    TotalGrossAmount: float
+    TotalNet: float
+    Currency: str = "COP"
+
+
+class FacturationEconomicEventsResponse(BaseModel):
+    metadata: Optional[AAEFMetadataOut] = None
+    summary: AAEFSummaryOut
+    invoices: List[AAEFInvoiceOut] = Field(default_factory=list)
+    transactions: List[AAEFTransactionOut] = Field(default_factory=list)

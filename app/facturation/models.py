@@ -171,6 +171,8 @@ class Concept(Base):
         onupdate=func.now()
     )
 
+    accounting_account = Column(String(20), nullable=False)
+
     # relaciones
     scope       = relationship('ScopeType')
     tipo        = relationship('ConceptType')
