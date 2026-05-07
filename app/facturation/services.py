@@ -776,7 +776,7 @@ class EconomicEventsService:
     def _map_invoice_status(self, status: str) -> str:
         value = (status or "").strip().lower()
         mapping = {
-            "pagada": "ACTIVE",
+            "pagada": "PAID",
             "pendiente": "PENDING",
             "anulada": "CANCELLED"
         }
@@ -785,7 +785,8 @@ class EconomicEventsService:
     def _map_payment_status(self, status) -> str:
         value = str(status).strip()
         mapping = {
-            "4": "COMPLETED"
+            "4": "COMPLETED",
+            "6": "REFUSED"
         }
         return mapping.get(value, "UNKNOWN")
 
