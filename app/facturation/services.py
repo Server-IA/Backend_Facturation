@@ -798,9 +798,12 @@ class EconomicEventsService:
     def _get_user_from_invoice(self, invoice):
         try:
             from app.facturation.models import User
+
             if not getattr(invoice, "user_id", None):
                 return None
+
             return self.db.get(User, invoice.user_id)
+
         except Exception:
             return None
 
@@ -824,7 +827,9 @@ class EconomicEventsService:
             "Address": getattr(user, "address", None) if user else None,
             "City": getattr(user, "city", None) if user else None,
             "Country": getattr(user, "country", None) if user and getattr(user, "country", None) else "CO",
-            "Email": getattr(invoice, "client_email", None) or (getattr(user, "email", None) if user else None)
+            "Email": getattr(invoice, "client_email", None) or (
+                getattr(user, "email", None) if user else None
+            )
         }
 
     def _build_invoice_lines(self, invoice_id: int):
@@ -836,8 +841,10 @@ class EconomicEventsService:
         )
 
         lines = []
+
         for invoice_concept, concept in rows:
             line_type = None
+
             try:
                 line_type = concept.tipo.name if getattr(concept, "tipo", None) else None
             except Exception:
@@ -849,21 +856,38 @@ class EconomicEventsService:
 
             if raw_accounting_account is None:
                 accounting_account = []
+
             elif isinstance(raw_accounting_account, list):
-                accounting_account = [str(x) for x in raw_accounting_account if x is not None]
+                accounting_account = [
+                    str(x)
+                    for x in raw_accounting_account
+                    if x is not None
+                ]
+
             elif isinstance(raw_accounting_account, str):
                 value = raw_accounting_account.strip()
 
                 # Caso tipo array de postgres serializado: {41013,41014}
                 if value.startswith("{") and value.endswith("}"):
                     inner = value[1:-1].strip()
-                    accounting_account = [x.strip().strip('"') for x in inner.split(",") if x.strip()]
+                    accounting_account = [
+                        x.strip().strip('"')
+                        for x in inner.split(",")
+                        if x.strip()
+                    ]
+
                 # Caso JSON simple tipo ["41013"]
                 elif value.startswith("[") and value.endswith("]"):
                     cleaned = value.strip("[]").replace('"', "").replace("'", "")
-                    accounting_account = [x.strip() for x in cleaned.split(",") if x.strip()]
+                    accounting_account = [
+                        x.strip()
+                        for x in cleaned.split(",")
+                        if x.strip()
+                    ]
+
                 else:
                     accounting_account = [value]
+
             else:
                 accounting_account = [str(raw_accounting_account)]
 
@@ -898,10 +922,13 @@ class EconomicEventsService:
                     "Code": "01",
                     "Name": "Factura de Venta"
                 },
-                "IssueDate": invoice.issuance_date.date().isoformat() if invoice.issuance_date else None,
-                "DueDate": invoice.expiration_date.date().isoformat() if invoice.expiration_date else None,
+                "IssueDate": invoice.issuance_date.date().isoformat()
+                if invoice.issuance_date else None,
+                "DueDate": invoice.expiration_date.date().isoformat()
+                if invoice.expiration_date else None,
                 "Status": self._map_invoice_status(invoice.status),
-                "UpdatedAt": invoice.billing_end_date.date().isoformat() if invoice.billing_end_date else None
+                "UpdatedAt": invoice.billing_end_date.date().isoformat()
+                if invoice.billing_end_date else None
             },
             "ThirdParty": third_party,
             "Totals": {
@@ -916,23 +943,35 @@ class EconomicEventsService:
         }
 
     def _build_transaction_document_id(self, invoice_reference_code: str, payment):
-        payment_date = payment.paid_at.date().isoformat() if payment.paid_at else datetime.utcnow().date().isoformat()
+        payment_date = (
+            payment.paid_at.date().isoformat()
+            if payment.paid_at
+            else datetime.utcnow().date().isoformat()
+        )
+
         return f"PAY-{invoice_reference_code}-{payment_date}"
 
     def _build_transaction_document(self, invoice, payment):
         third_party = self._build_third_party(invoice)
 
         notes_parts = []
+
         if third_party.get("Email"):
             notes_parts.append(f"Pagador: {third_party['Email']}")
+
         if getattr(payment, "reference_code", None):
             notes_parts.append(f"Ref: {payment.reference_code}")
+
         if getattr(payment, "transaction_id", None):
             notes_parts.append(f"TxID: {payment.transaction_id}")
 
         return {
-            "DocumentId": self._build_transaction_document_id(invoice.reference_code, payment),
-            "Date": payment.paid_at.date().isoformat() if payment.paid_at else None,
+            "DocumentId": self._build_transaction_document_id(
+                invoice.reference_code,
+                payment
+            ),
+            "Date": payment.paid_at.date().isoformat()
+            if payment.paid_at else None,
             "RelatedInvoiceId": invoice.reference_code,
             "ThirdParty": {
                 "NIT": third_party.get("NIT"),
@@ -948,7 +987,9 @@ class EconomicEventsService:
                 "Name": "Pago de Factura"
             },
             "PaymentMethod": {
-                "Code": self._map_payment_method(getattr(payment, "payment_method", None))
+                "Code": self._map_payment_method(
+                    getattr(payment, "payment_method", None)
+                )
             }
         }
 
@@ -971,6 +1012,7 @@ class EconomicEventsService:
         }
 
     def get_economic_events_by_period(self, since_period, until_period):
+
         since_period = self._normalize_period_value(since_period)
         until_period = self._normalize_period_value(until_period)
 
@@ -987,7 +1029,11 @@ class EconomicEventsService:
                 func.date(Invoice.billing_start_date) >= since_period,
                 func.date(Invoice.billing_end_date) <= until_period
             )
-            .order_by(Invoice.id.asc(), Payment.paid_at.asc(), Payment.id.asc())
+            .order_by(
+                Invoice.id.asc(),
+                Payment.paid_at.asc(),
+                Payment.id.asc()
+            )
             .all()
         )
 
@@ -1011,11 +1057,20 @@ class EconomicEventsService:
         transactions = []
 
         for invoice, payment in rows:
+
             if invoice.id not in seen_invoice_ids:
-                invoices.append(self._build_invoice_document(invoice))
+                invoices.append(
+                    self._build_invoice_document(invoice)
+                )
                 seen_invoice_ids.add(invoice.id)
 
-            transactions.append(self._build_transaction_document(invoice, payment))
+            if payment.paid_at:
+                payment_date = payment.paid_at.date()
+
+                if since_period <= payment_date <= until_period:
+                    transactions.append(
+                        self._build_transaction_document(invoice, payment)
+                    )
 
         total_gross_amount = round(
             sum(item["Totals"]["TotalPayment"] for item in invoices),
